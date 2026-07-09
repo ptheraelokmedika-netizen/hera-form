@@ -2,6 +2,9 @@ import type { ClinicSettings, Distributor, DraftOrder, HeraStorage, Order, Order
 
 export const STORAGE_KEY = 'hera-form-storage-v1'
 const CORRUPT_BACKUP_KEY = 'hera-form-storage-corrupt-backup'
+const PRE_OPTIMIZE_BACKUP_KEY = 'hera-form-storage-pre-optimize-backup'
+const BEFORE_QUOTA_MIGRATION_KEY = 'hera-form-storage-before-quota-migration'
+export const SIGNATURE_CANVAS = { width: 520, height: 250 }
 const OLD_KEYS = [
   'clinicSettings',
   'distributors',
@@ -28,17 +31,17 @@ export const defaultVisualSettings = (): SignatureVisualSettings => ({
 })
 
 export const defaultStampLayout = (): SignatureAssetLayout => ({
-  x: 44,
-  y: 2,
-  width: 180,
+  x: 27,
+  y: 24,
+  width: 170,
   opacity: 100,
   zIndex: 1,
 })
 
 export const defaultSignatureLayout = (): SignatureAssetLayout => ({
-  x: 3,
-  y: 33,
-  width: 250,
+  x: 43,
+  y: 32,
+  width: 230,
   opacity: 100,
   zIndex: 2,
 })
@@ -59,16 +62,50 @@ const clampNumber = (value: unknown, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, Math.round(number)))
 }
 
+const isDataUrl = (value: unknown) => typeof value === 'string' && value.startsWith('data:image/')
+
+const assetHeight = (kind: 'stamp' | 'signature', width: number) => Math.round(width * (kind === 'stamp' ? 0.72 : 0.36))
+
+export const normalizeSignatureLayout = (
+  value: Partial<SignatureAssetLayout> | null | undefined,
+  fallback: SignatureAssetLayout,
+  kind: 'stamp' | 'signature' = 'stamp',
+): SignatureAssetLayout => {
+  if (value?.widthUnit === 'percent') {
+    const width = clampNumber(value.width, kind === 'stamp' ? 28 : 38, kind === 'stamp' ? 88 : 96, fallback.width)
+    const heightPercent = width * (kind === 'stamp' ? 1.58 : 0.79)
+    const maxX = Math.max(0, 100 - width)
+    const maxY = Math.max(0, 100 - heightPercent - 4)
+    return {
+      x: clampNumber(value.x, 0, maxX, fallback.x),
+      y: clampNumber(value.y, 0, maxY, fallback.y),
+      width,
+      widthUnit: 'percent',
+      opacity: clampNumber(value.opacity, kind === 'stamp' ? 40 : 60, 100, fallback.opacity),
+      zIndex: clampNumber(value.zIndex, 0, 5, fallback.zIndex),
+    }
+  }
+  const maxWidth = kind === 'stamp' ? 320 : 340
+  const minWidth = kind === 'stamp' ? 80 : 120
+  const width = Math.min(SIGNATURE_CANVAS.width - 24, clampNumber(value?.width, minWidth, maxWidth, fallback.width))
+  const height = assetHeight(kind, width)
+  const maxX = Math.max(0, Math.floor(((SIGNATURE_CANVAS.width - width) / SIGNATURE_CANVAS.width) * 100))
+  const maxY = Math.max(0, Math.floor(((SIGNATURE_CANVAS.height - height - 22) / SIGNATURE_CANVAS.height) * 100))
+  return {
+    x: clampNumber(value?.x, 0, maxX, fallback.x),
+    y: clampNumber(value?.y, 0, maxY, fallback.y),
+    width,
+    widthUnit: value?.widthUnit,
+    opacity: clampNumber(value?.opacity, kind === 'stamp' ? 40 : 60, 100, fallback.opacity),
+    zIndex: clampNumber(value?.zIndex, 0, 5, fallback.zIndex),
+  }
+}
+
 export const normalizeAssetLayout = (
   value: Partial<SignatureAssetLayout> | null | undefined,
   fallback: SignatureAssetLayout,
-): SignatureAssetLayout => ({
-  x: clampNumber(value?.x, -35, 120, fallback.x),
-  y: clampNumber(value?.y, -35, 120, fallback.y),
-  width: clampNumber(value?.width, 60, 420, fallback.width),
-  opacity: clampNumber(value?.opacity, 20, 100, fallback.opacity),
-  zIndex: clampNumber(value?.zIndex, 0, 5, fallback.zIndex),
-})
+  kind: 'stamp' | 'signature' = 'stamp',
+): SignatureAssetLayout => normalizeSignatureLayout(value, fallback, kind)
 
 export const defaultSettings = (): ClinicSettings => ({
   companyName: 'PT HERA ELOK MEDIKA',
@@ -121,6 +158,7 @@ const normalizeSettings = (value?: Partial<ClinicSettings> | null): ClinicSettin
   ...defaultSettings(),
   ...(value || {}),
   ...normalizeVisualSettings(value),
+  imageSizes: value?.imageSizes || {},
   updatedAt: typeof value?.updatedAt === 'string' ? value.updatedAt : now(),
 })
 
@@ -142,12 +180,12 @@ const normalizeDraft = (value: Partial<DraftOrder> | null | undefined, settings:
       ...defaultStampLayout(),
       width: normalizeVisualSettings(value.visualSettings || settings).stampWidth,
       opacity: normalizeVisualSettings(value.visualSettings || settings).stampOpacity,
-    }),
+    }, 'stamp'),
     signatureLayout: normalizeAssetLayout(value.signatureLayout, {
       ...defaultSignatureLayout(),
       width: normalizeVisualSettings(value.visualSettings || settings).signatureWidth,
       opacity: normalizeVisualSettings(value.visualSettings || settings).signatureOpacity,
-    }),
+    }, 'signature'),
     visualSettings: normalizeVisualSettings(value.visualSettings || settings),
     items: Array.isArray(value.items) && value.items.length ? value.items.map((item) => ({ ...emptyItem(), ...item })) : [emptyItem()],
     createdAt: value.createdAt || now(),
@@ -169,24 +207,24 @@ const normalizeOrder = (value: Partial<Order>, settings: ClinicSettings): Order 
       email: value.distributorSnapshot.email || '',
       notes: value.distributorSnapshot.notes || '',
     },
-    clinicSnapshot: normalizeSettings(value.clinicSnapshot || settings),
+    clinicSnapshot: normalizeSettings(stripSnapshotImages(value.clinicSnapshot || settings)),
     pharmacistSnapshot: {
       name: value.pharmacistSnapshot?.name || '',
       sipa: value.pharmacistSnapshot?.sipa || '',
-      signatureUrl: value.pharmacistSnapshot?.signatureUrl || '',
-      stampUrl: value.pharmacistSnapshot?.stampUrl || '',
+      signatureUrl: isDataUrl(value.pharmacistSnapshot?.signatureUrl) ? 'settings.signatureUrl' : value.pharmacistSnapshot?.signatureUrl || 'settings.signatureUrl',
+      stampUrl: isDataUrl(value.pharmacistSnapshot?.stampUrl) ? 'settings.stampUrl' : value.pharmacistSnapshot?.stampUrl || 'settings.stampUrl',
     },
     selectedDesign: value.selectedDesign || 'official-compact',
     stampLayout: normalizeAssetLayout(value.stampLayout, {
       ...defaultStampLayout(),
       width: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings).stampWidth,
       opacity: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings).stampOpacity,
-    }),
+    }, 'stamp'),
     signatureLayout: normalizeAssetLayout(value.signatureLayout, {
       ...defaultSignatureLayout(),
       width: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings).signatureWidth,
       opacity: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings).signatureOpacity,
-    }),
+    }, 'signature'),
     visualSettings: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings),
     items: value.items.map((item) => ({ ...emptyItem(), ...item })),
     status: value.status || 'finalized',
@@ -198,6 +236,28 @@ const normalizeOrder = (value: Partial<Order>, settings: ClinicSettings): Order 
   }
 }
 
+const stripSnapshotImages = <T extends Partial<ClinicSettings> | undefined | null>(settings: T): T => {
+  if (!settings) return settings
+  return {
+    ...settings,
+    logoUrl: isDataUrl(settings.logoUrl) ? 'settings.logoUrl' : settings.logoUrl || 'settings.logoUrl',
+    signatureUrl: isDataUrl(settings.signatureUrl) ? 'settings.signatureUrl' : settings.signatureUrl || 'settings.signatureUrl',
+    stampUrl: isDataUrl(settings.stampUrl) ? 'settings.stampUrl' : settings.stampUrl || 'settings.stampUrl',
+  }
+}
+
+const stripOrderImages = (order: Order): Order => ({
+  ...order,
+  clinicSnapshot: stripSnapshotImages(order.clinicSnapshot),
+  pharmacistSnapshot: {
+    ...order.pharmacistSnapshot,
+    signatureUrl: isDataUrl(order.pharmacistSnapshot.signatureUrl) ? 'settings.signatureUrl' : order.pharmacistSnapshot.signatureUrl || 'settings.signatureUrl',
+    stampUrl: isDataUrl(order.pharmacistSnapshot.stampUrl) ? 'settings.stampUrl' : order.pharmacistSnapshot.stampUrl || 'settings.stampUrl',
+  },
+  stampLayout: normalizeSignatureLayout(order.stampLayout, defaultStampLayout(), 'stamp'),
+  signatureLayout: normalizeSignatureLayout(order.signatureLayout, defaultSignatureLayout(), 'signature'),
+})
+
 const normalizeStore = (value?: Partial<HeraStorage> | null): HeraStorage => {
   const settings = normalizeSettings(value?.settings)
   const orders = Array.isArray(value?.orders)
@@ -207,7 +267,7 @@ const normalizeStore = (value?: Partial<HeraStorage> | null): HeraStorage => {
     version: 1,
     settings,
     distributors: Array.isArray(value?.distributors) ? value.distributors : [],
-    orders,
+    orders: orders.map(stripOrderImages),
     currentDraft: normalizeDraft(value?.currentDraft, settings),
     selectedDesign: value?.selectedDesign,
     updatedAt: value?.updatedAt || now(),
@@ -240,7 +300,19 @@ export const loadStore = (): HeraStorage => {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (raw) {
     const parsed = safeParse<Partial<HeraStorage>>(raw)
-    if (parsed) return normalizeStore(parsed)
+    if (parsed) {
+      const hadBloatedImages = raw.includes('clinicSnapshot') && raw.includes('data:image/')
+      if (hadBloatedImages && !localStorage.getItem(BEFORE_QUOTA_MIGRATION_KEY)) {
+        try {
+          localStorage.setItem(BEFORE_QUOTA_MIGRATION_KEY, raw)
+        } catch {
+          // If quota is already full, continue with normalized in-memory data.
+        }
+      }
+      const normalized = normalizeStore(parsed)
+      if (hadBloatedImages) safeSaveStore(normalized)
+      return normalized
+    }
     localStorage.setItem(CORRUPT_BACKUP_KEY, raw)
   }
   const migrated = migrateOldKeys()
@@ -255,8 +327,30 @@ export const loadStore = (): HeraStorage => {
 
 export const saveStore = (store: HeraStorage) => {
   const next = normalizeStore({ ...store, updatedAt: now() })
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+  safeSetStorage(STORAGE_KEY, JSON.stringify(next))
   return next
+}
+
+const safeSetStorage = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value)
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+      const optimized = optimizeStorage(false)
+      localStorage.setItem(key, JSON.stringify(optimized))
+      if (key !== STORAGE_KEY) localStorage.setItem(key, value)
+      return
+    }
+    throw error
+  }
+}
+
+const safeSaveStore = (store: HeraStorage) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
+  } catch {
+    // Loading should never destroy data just because the browser storage is full.
+  }
 }
 
 export const getSettings = () => loadStore().settings
@@ -327,16 +421,16 @@ export const finalizeOrder = (draft: DraftOrder, settings: ClinicSettings) => {
       email: draft.distributorSnapshot.email,
       notes: draft.distributorSnapshot.notes,
     },
-    clinicSnapshot: normalizeSettings(settings),
+    clinicSnapshot: normalizeSettings(stripSnapshotImages(settings)),
     pharmacistSnapshot: {
       name: settings.pharmacistName,
       sipa: settings.pharmacistSipa,
-      signatureUrl: settings.signatureUrl,
-      stampUrl: settings.stampUrl,
+      signatureUrl: 'settings.signatureUrl',
+      stampUrl: 'settings.stampUrl',
     },
     selectedDesign: draft.selectedDesign || store.selectedDesign || 'official-compact',
-    stampLayout: normalizeAssetLayout(draft.stampLayout, defaultStampLayout()),
-    signatureLayout: normalizeAssetLayout(draft.signatureLayout, defaultSignatureLayout()),
+    stampLayout: normalizeAssetLayout(draft.stampLayout, defaultStampLayout(), 'stamp'),
+    signatureLayout: normalizeAssetLayout(draft.signatureLayout, defaultSignatureLayout(), 'signature'),
     visualSettings: normalizeVisualSettings(draft.visualSettings),
     items: draft.items.filter((item) => item.productName.trim() && item.quantity.trim()).map((item) => ({ ...item })),
     status: 'finalized',
@@ -348,6 +442,38 @@ export const finalizeOrder = (draft: DraftOrder, settings: ClinicSettings) => {
   }
   saveStore({ ...store, distributors: getDistributors(), orders: [order, ...store.orders], currentDraft: null })
   return order
+}
+
+export const optimizeStorage = (backup = true) => {
+  const raw = localStorage.getItem(STORAGE_KEY)
+  if (backup && raw) {
+    try {
+      localStorage.setItem(PRE_OPTIMIZE_BACKUP_KEY, raw)
+    } catch {
+      // Ignore backup write failure; optimization still helps recover quota.
+    }
+  }
+  const current = raw ? safeParse<Partial<HeraStorage>>(raw) : loadStore()
+  const optimized = normalizeStore(current || {})
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(optimized))
+  OLD_KEYS.forEach((key) => {
+    const oldValue = localStorage.getItem(key)
+    if (!oldValue) return
+    try {
+      localStorage.setItem(`hera-form-storage-obsolete-key-backup-${key}`, oldValue)
+      localStorage.removeItem(key)
+    } catch {
+      // Keep old key if backup cannot be written.
+    }
+  })
+  return optimized
+}
+
+export const getStorageUsage = () => {
+  const total = Object.keys(localStorage).reduce((sum, key) => sum + key.length + (localStorage.getItem(key)?.length || 0), 0)
+  const usedBytes = total * 2
+  const quotaBytes = 5 * 1024 * 1024
+  return { usedBytes, quotaBytes, percent: Math.round((usedBytes / quotaBytes) * 100) }
 }
 
 export const voidOrder = (id: string, reason: string) => {

@@ -4,7 +4,8 @@ import plusJakartaMedium from '@fontsource/plus-jakarta-sans/files/plus-jakarta-
 import plusJakartaSemiBold from '@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-600-normal.woff'
 import plusJakartaBold from '@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-700-normal.woff'
 import type { Order } from '../types/hera'
-import { formatDate, normalizeVisualSettings } from '../storage/heraStorage'
+import { assetBox, getDocumentDesign, normalizeDocumentAssetLayout } from '../documentDesign'
+import { formatDate } from '../storage/heraStorage'
 
 Font.register({
   family: 'Plus Jakarta Sans',
@@ -71,7 +72,7 @@ const s = StyleSheet.create({
   signatureWrap: { marginTop: 7, alignItems: 'flex-end' },
   signature: { width: 250 },
   signatureLine: { fontSize: 9, lineHeight: 1.28, marginBottom: 0 },
-  signArea: { height: 102, marginTop: -1, marginBottom: -10, position: 'relative' },
+  signArea: { height: 106, marginTop: -1, marginBottom: -8, position: 'relative', overflow: 'hidden' },
   signImg: { position: 'absolute', left: 4, top: 34, objectFit: 'contain' },
   stampImg: { position: 'absolute', left: 104, top: -3, objectFit: 'contain' },
   pharmacistName: { fontSize: 10.2, fontWeight: 600, color: '#1f302b', lineHeight: 1.25 },
@@ -94,14 +95,24 @@ export function OrderPdf({ order }: { order: Order }) {
   const c = order.clinicSnapshot
   const d = order.distributorSnapshot
   const p = order.pharmacistSnapshot
-  const visual = normalizeVisualSettings(order.visualSettings)
   const design = order.selectedDesign || 'official-compact'
+  const tokens = getDocumentDesign(design)
   const isPremium = design === 'premium-editorial'
   const isApothecary = design === 'apothecary-professional'
   const isMinimal = design === 'minimal-legal-letter'
   const isModern = design === 'modern-clinic-admin'
-  const stampLayout = order.stampLayout || { x: 44, y: 2, width: visual.stampWidth, opacity: visual.stampOpacity, zIndex: 1 }
-  const signatureLayout = order.signatureLayout || { x: 3, y: 33, width: visual.signatureWidth, opacity: visual.signatureOpacity, zIndex: 2 }
+  const stampLayout = normalizeDocumentAssetLayout(
+    order.stampLayout,
+    'stamp',
+    design,
+  )
+  const signatureLayout = normalizeDocumentAssetLayout(
+    order.signatureLayout,
+    'signature',
+    design,
+  )
+  const stampBox = assetBox(stampLayout, 'stamp', 'pdf', design)
+  const signatureBox = assetBox(signatureLayout, 'signature', 'pdf', design)
   const pageStyle = [s.page, isPremium ? s.pagePremium : {}, isMinimal ? s.pageMinimal : {}, isModern ? s.pageModern : {}]
   const headerStyle = [s.header, isPremium ? s.headerCentered : {}]
   const titleStyle = [s.title, isModern ? s.titleModern : {}]
@@ -185,21 +196,21 @@ export function OrderPdf({ order }: { order: Order }) {
         </Text>
 
         <View style={s.signatureWrap}>
-          <View style={s.signature}>
+          <View style={[s.signature, { width: tokens.signature.pdfWidth }]}>
             <Text style={s.signatureLine}>Dengan hormat,</Text>
             <Text style={s.signatureLine}>Apoteker Penanggung Jawab</Text>
-            <View style={s.signArea}>
+            <View style={[s.signArea, { width: tokens.signature.pdfWidth, height: tokens.signature.pdfHeight }]}>
               {p.stampUrl ? (
                 <Image
                   src={p.stampUrl}
                   style={[
                     s.stampImg,
                     {
-                      left: (stampLayout.x / 100) * 250,
-                      top: (stampLayout.y / 100) * 112,
-                      width: stampLayout.width * 0.85,
-                      height: stampLayout.width * 0.68,
-                      opacity: stampLayout.opacity / 100,
+                      left: stampBox.left,
+                      top: stampBox.top,
+                      width: stampBox.width,
+                      height: stampBox.height,
+                      opacity: stampBox.opacity,
                     },
                   ]}
                 />
@@ -210,11 +221,11 @@ export function OrderPdf({ order }: { order: Order }) {
                   style={[
                     s.signImg,
                     {
-                      left: (signatureLayout.x / 100) * 250,
-                      top: (signatureLayout.y / 100) * 112,
-                      width: signatureLayout.width * 0.85,
-                      height: signatureLayout.width * 0.32,
-                      opacity: signatureLayout.opacity / 100,
+                      left: signatureBox.left,
+                      top: signatureBox.top,
+                      width: signatureBox.width,
+                      height: signatureBox.height,
+                      opacity: signatureBox.opacity,
                     },
                   ]}
                 />

@@ -23,8 +23,9 @@ import {
 } from 'lucide-react'
 import { createElement, useMemo, useState } from 'react'
 import { useRef } from 'react'
-import type { PointerEvent, ReactNode } from 'react'
+import type { CSSProperties, PointerEvent, ReactNode } from 'react'
 import './App.css'
+import { assetBox, getDocumentDesign, normalizeDocumentAssetLayout } from './documentDesign'
 import { OrderPdf } from './pdf/OrderPdf'
 import {
   defaultSettings,
@@ -34,11 +35,14 @@ import {
   backupFilename,
   finalizeOrder,
   formatDate,
+  getStorageUsage,
   getCurrentDraft,
   loadStore,
   mergeImportedStore,
   now,
   normalizeVisualSettings,
+  normalizeSignatureLayout,
+  optimizeStorage,
   sanitizeFilename,
   saveDistributors,
   saveCurrentDraft,
@@ -47,7 +51,7 @@ import {
   uid,
   voidOrder,
 } from './storage/heraStorage'
-import type { ClinicSettings, Distributor, DraftOrder, HeraStorage, Order, Page, SignatureVisualSettings } from './types/hera'
+import type { ClinicSettings, Distributor, DraftOrder, HeraStorage, Order, Page, SignatureAssetLayout, SignatureVisualSettings } from './types/hera'
 
 const navItems: Array<{ key: Page; label: string; Icon: typeof FilePlus2 }> = [
   { key: 'create', label: 'Buat Surat', Icon: FilePlus2 },
@@ -65,14 +69,60 @@ const pageMeta: Record<Page, { title: string; subtitle: string }> = {
   designs: { title: 'Pilihan Desain Surat', subtitle: 'Pilih desain surat yang paling sesuai dengan kebutuhan klinik Anda.' },
 }
 
-const readImage = (file: File, done: (value: string) => void) => {
+const compressDataUrl = (source: string, kind: 'logoUrl' | 'signatureUrl' | 'stampUrl', fallbackSize = 0) =>
+  new Promise<{ value: string; size: number }>((resolve) => {
+    const maxWidth = kind === 'logoUrl' ? 600 : 900
+    const img = new window.Image()
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / img.width)
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(img.width * scale))
+      canvas.height = Math.max(1, Math.round(img.height * scale))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return resolve({ value: source, size: fallbackSize || source.length })
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      const needsTransparency = kind !== 'logoUrl' || source.startsWith('data:image/png')
+      const value = needsTransparency ? canvas.toDataURL('image/png') : canvas.toDataURL('image/webp', 0.82)
+      resolve({ value, size: Math.round((value.length * 3) / 4) })
+    }
+    img.onerror = () => resolve({ value: source, size: fallbackSize || source.length })
+    img.src = source
+  })
+
+const readImage = (file: File, kind: 'logoUrl' | 'signatureUrl' | 'stampUrl', done: (value: string, size: number) => void) => {
   const reader = new FileReader()
-  reader.onload = () => done(String(reader.result || ''))
+  reader.onload = async () => {
+    const result = await compressDataUrl(String(reader.result || ''), kind, file.size)
+    done(result.value, result.size)
+  }
   reader.readAsDataURL(file)
 }
 
-const downloadPdf = async (order: Order) => {
-  const element = createElement(OrderPdf, { order }) as Parameters<typeof pdf>[0]
+const isSettingsRef = (value: string | undefined, key: 'logoUrl' | 'signatureUrl' | 'stampUrl') => value === `settings.${key}`
+
+const resolveOrderAssets = (order: Order, settings: ClinicSettings): Order => ({
+  ...order,
+  clinicSnapshot: {
+    ...order.clinicSnapshot,
+    logoUrl: isSettingsRef(order.clinicSnapshot.logoUrl, 'logoUrl') ? settings.logoUrl : order.clinicSnapshot.logoUrl,
+  },
+  pharmacistSnapshot: {
+    ...order.pharmacistSnapshot,
+    signatureUrl: isSettingsRef(order.pharmacistSnapshot.signatureUrl, 'signatureUrl') ? settings.signatureUrl : order.pharmacistSnapshot.signatureUrl,
+    stampUrl: isSettingsRef(order.pharmacistSnapshot.stampUrl, 'stampUrl') ? settings.stampUrl : order.pharmacistSnapshot.stampUrl,
+  },
+  stampLayout: normalizeDocumentAssetLayout(order.stampLayout, 'stamp', order.selectedDesign),
+  signatureLayout: normalizeDocumentAssetLayout(order.signatureLayout, 'signature', order.selectedDesign),
+})
+
+const toEditableAssetLayout = (layout: SignatureAssetLayout, designId: string): SignatureAssetLayout => {
+  if (layout.widthUnit !== 'percent') return layout
+  const design = getDocumentDesign(designId)
+  return { ...layout, width: Math.round((design.signature.webWidth * layout.width) / 100), widthUnit: 'px' }
+}
+
+const downloadPdf = async (order: Order, settings: ClinicSettings) => {
+  const element = createElement(OrderPdf, { order: resolveOrderAssets(order, settings) }) as Parameters<typeof pdf>[0]
   const blob = await pdf(element).toBlob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -103,6 +153,7 @@ function App() {
   const [notice, setNotice] = useState('')
   const [draftSavedAt, setDraftSavedAt] = useState(draft.updatedAt)
   const [selectedDesign, setSelectedDesign] = useState(initialStore.selectedDesign || 'official-compact')
+  const [layoutDebug, setLayoutDebug] = useState(false)
   const draftSaveTimer = useRef<number | null>(null)
   const finalizingRef = useRef(false)
 
@@ -159,7 +210,13 @@ function App() {
     finalizingRef.current = true
     if (draftSaveTimer.current) window.clearTimeout(draftSaveTimer.current)
     try {
-      const order = finalizeOrder({ ...draft, selectedDesign: draft.selectedDesign || selectedDesign || 'official-compact' }, settings)
+      const finalDesign = draft.selectedDesign || selectedDesign || 'official-compact'
+      const order = finalizeOrder({
+        ...draft,
+        selectedDesign: finalDesign,
+        stampLayout: normalizeDocumentAssetLayout(draft.stampLayout, 'stamp', finalDesign),
+        signatureLayout: normalizeDocumentAssetLayout(draft.signatureLayout, 'signature', finalDesign),
+      }, settings)
       const store = loadStore()
       setOrders(store.orders)
       setDistributors(store.distributors)
@@ -171,7 +228,7 @@ function App() {
       setPage('history')
       flash('Order berhasil difinalisasi. PDF final sedang dibuat.')
       try {
-        await downloadPdf(order)
+        await downloadPdf(order, settings)
       } catch {
         flash('Order sudah finalized. Klik Download PDF Final jika file belum otomatis terunduh.')
       }
@@ -190,8 +247,8 @@ function App() {
       distributorId: order.distributorId,
       distributorSnapshot: { ...order.distributorSnapshot },
       selectedDesign: order.selectedDesign || selectedDesign || 'official-compact',
-      stampLayout: order.stampLayout,
-      signatureLayout: order.signatureLayout,
+      stampLayout: toEditableAssetLayout(order.stampLayout, order.selectedDesign || selectedDesign || 'official-compact'),
+      signatureLayout: toEditableAssetLayout(order.signatureLayout, order.selectedDesign || selectedDesign || 'official-compact'),
       visualSettings: normalizeVisualSettings(order.visualSettings),
       items: order.items.map((item) => ({ ...item, id: uid('item') })),
       createdAt: now(),
@@ -478,7 +535,15 @@ function App() {
         ) : null}
 
         {page === 'create' && preview ? (
-          <Preview order={makePreviewOrder()} onBack={() => setPreview(false)} onFinalize={finalize} onPdf={() => downloadPdf(makePreviewOrder())} />
+          <Preview
+            order={makePreviewOrder()}
+            settings={settings}
+            layoutDebug={layoutDebug}
+            setLayoutDebug={setLayoutDebug}
+            onBack={() => setPreview(false)}
+            onFinalize={finalize}
+            onPdf={() => downloadPdf(makePreviewOrder(), settings)}
+          />
         ) : null}
 
         {page === 'history' ? (
@@ -495,6 +560,7 @@ function App() {
             }}
             duplicate={duplicateOrder}
             markVoid={markVoid}
+            settings={settings}
           />
         ) : null}
 
@@ -554,6 +620,7 @@ function NumberSlider({
   min,
   max,
   suffix = 'px',
+  hints,
   onChange,
 }: {
   label: string
@@ -561,19 +628,32 @@ function NumberSlider({
   min: number
   max: number
   suffix?: string
+  hints?: [string, string, string]
   onChange: (value: number) => void
 }) {
+  const safeValue = Math.min(max, Math.max(min, Math.round(value)))
   return (
     <label className="slider-field">
       <span>{label}</span>
       <div>
-        <input type="range" min={min} max={max} value={value} onChange={(e) => onChange(Number(e.target.value))} />
-        <input type="number" min={min} max={max} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+        <input type="range" min={min} max={max} value={safeValue} onChange={(e) => onChange(Number(e.target.value))} />
+        <input type="number" min={min} max={max} value={safeValue} onChange={(e) => onChange(Math.min(max, Math.max(min, Number(e.target.value))))} />
         <small>{suffix}</small>
       </div>
+      {hints ? (
+        <em>
+          <span>{hints[0]}</span>
+          <span>{hints[1]}</span>
+          <span>{hints[2]}</span>
+        </em>
+      ) : null}
     </label>
   )
 }
+
+const safeStamp = (layout?: Partial<SignatureAssetLayout>) => normalizeSignatureLayout(layout, { x: 27, y: 24, width: 170, opacity: 100, zIndex: 1 }, 'stamp')
+const safeSignature = (layout?: Partial<SignatureAssetLayout>) =>
+  normalizeSignatureLayout(layout, { x: 43, y: 32, width: 230, opacity: 100, zIndex: 2 }, 'signature')
 
 function SignatureControls({
   title,
@@ -587,8 +667,8 @@ function SignatureControls({
   onChange: (value: Partial<DraftOrder>) => void
 }) {
   const visual = normalizeVisualSettings(value.visualSettings)
-  const stampLayout = value.stampLayout
-  const signatureLayout = value.signatureLayout
+  const stampLayout = safeStamp(value.stampLayout)
+  const signatureLayout = safeSignature(value.signatureLayout)
   const patchVisual = (patchValue: Partial<SignatureVisualSettings>) => {
     const nextVisual = normalizeVisualSettings({ ...visual, ...patchValue })
     onChange({
@@ -599,42 +679,42 @@ function SignatureControls({
   }
   const patchStamp = (patchValue: Partial<typeof stampLayout>) =>
     onChange({
-      stampLayout: { ...stampLayout, ...patchValue },
+      stampLayout: safeStamp({ ...stampLayout, ...patchValue, widthUnit: 'px' }),
       visualSettings: normalizeVisualSettings({ ...visual, stampWidth: patchValue.width ?? stampLayout.width, stampOpacity: patchValue.opacity ?? stampLayout.opacity }),
     })
   const patchSignature = (patchValue: Partial<typeof signatureLayout>) =>
     onChange({
-      signatureLayout: { ...signatureLayout, ...patchValue },
+      signatureLayout: safeSignature({ ...signatureLayout, ...patchValue, widthUnit: 'px' }),
       visualSettings: normalizeVisualSettings({
         ...visual,
         signatureWidth: patchValue.width ?? signatureLayout.width,
         signatureOpacity: patchValue.opacity ?? signatureLayout.opacity,
       }),
     })
-  const preset = (stampWidth: number, signatureWidth: number) =>
+  const preset = (stampWidth: number, signatureWidth: number, stampX: number, stampY: number, signX: number, signY: number) =>
     onChange({
       visualSettings: normalizeVisualSettings({ ...visual, stampWidth, signatureWidth }),
-      stampLayout: { ...stampLayout, width: stampWidth },
-      signatureLayout: { ...signatureLayout, width: signatureWidth },
+      stampLayout: safeStamp({ ...stampLayout, x: stampX, y: stampY, width: stampWidth, widthUnit: 'px' }),
+      signatureLayout: safeSignature({ ...signatureLayout, x: signX, y: signY, width: signatureWidth, widthUnit: 'px' }),
     })
   return (
     <section className="panel">
-      <Title icon={<PenLine size={18} />} title={title} text="Ukuran ini ikut tersimpan di draft dan snapshot order finalized." />
+      <Title icon={<PenLine size={18} />} title={title} text="Geser langsung di area preview atau pakai slider di bawah." />
       <div className="preset-row">
-        <button type="button" className="secondary" onClick={() => preset(120, 160)}>
+        <button type="button" className="secondary" onClick={() => preset(130, 180, 24, 28, 46, 36)}>
           Kecil
         </button>
-        <button type="button" className="secondary" onClick={() => preset(160, 220)}>
+        <button type="button" className="secondary" onClick={() => preset(170, 230, 27, 24, 43, 32)}>
           Normal
         </button>
-        <button type="button" className="secondary" onClick={() => preset(210, 280)}>
+        <button type="button" className="secondary" onClick={() => preset(220, 280, 21, 18, 38, 30)}>
           Besar
+        </button>
+        <button type="button" className="secondary" onClick={() => onChange({ stampLayout: safeStamp(), signatureLayout: safeSignature(), visualSettings: normalizeVisualSettings(defaults) })}>
+          Reset Posisi
         </button>
         <button type="button" className="secondary" onClick={() => patchVisual(normalizeVisualSettings(defaults))}>
           Reset ke Default
-        </button>
-        <button type="button" className="secondary strong">
-          Freeform Edit
         </button>
       </div>
       <SignatureFreeformEditor
@@ -644,9 +724,9 @@ function SignatureControls({
         onSignatureChange={patchSignature}
       />
       <div className="grid two">
-        <NumberSlider label="Posisi X Stempel" value={stampLayout.x} min={-35} max={120} suffix="%" onChange={(x) => patchStamp({ x })} />
-        <NumberSlider label="Posisi Y Stempel" value={stampLayout.y} min={-35} max={120} suffix="%" onChange={(y) => patchStamp({ y })} />
-        <NumberSlider label="Lebar Stempel" value={stampLayout.width} min={60} max={420} onChange={(width) => patchStamp({ width })} />
+        <NumberSlider label="Geser Stempel: Kiri ↔ Kanan" value={stampLayout.x} min={0} max={100} suffix="%" hints={['Kiri', 'Tengah', 'Kanan']} onChange={(x) => patchStamp({ x })} />
+        <NumberSlider label="Naik/Turun Stempel" value={stampLayout.y} min={0} max={100} suffix="%" hints={['Atas', 'Tengah', 'Bawah']} onChange={(y) => patchStamp({ y })} />
+        <NumberSlider label="Besar Stempel" value={stampLayout.width} min={80} max={320} hints={['Kecil', 'Normal', 'Besar']} onChange={(width) => patchStamp({ width })} />
         <NumberSlider
           label="Transparansi Stempel"
           value={stampLayout.opacity}
@@ -655,13 +735,14 @@ function SignatureControls({
           suffix="%"
           onChange={(opacity) => patchStamp({ opacity })}
         />
-        <NumberSlider label="Posisi X Tanda Tangan" value={signatureLayout.x} min={-35} max={120} suffix="%" onChange={(x) => patchSignature({ x })} />
-        <NumberSlider label="Posisi Y Tanda Tangan" value={signatureLayout.y} min={-35} max={120} suffix="%" onChange={(y) => patchSignature({ y })} />
+        <NumberSlider label="Geser Tanda Tangan: Kiri ↔ Kanan" value={signatureLayout.x} min={0} max={100} suffix="%" hints={['Kiri', 'Tengah', 'Kanan']} onChange={(x) => patchSignature({ x })} />
+        <NumberSlider label="Naik/Turun Tanda Tangan" value={signatureLayout.y} min={0} max={100} suffix="%" hints={['Atas', 'Tengah', 'Bawah']} onChange={(y) => patchSignature({ y })} />
         <NumberSlider
-          label="Lebar Tanda Tangan"
+          label="Besar Tanda Tangan"
           value={signatureLayout.width}
-          min={60}
-          max={420}
+          min={120}
+          max={340}
+          hints={['Kecil', 'Normal', 'Besar']}
           onChange={(width) => patchSignature({ width })}
         />
         <NumberSlider
@@ -688,6 +769,7 @@ function SignatureFreeformEditor({
   onStampChange: (value: Partial<DraftOrder['stampLayout']>) => void
   onSignatureChange: (value: Partial<DraftOrder['signatureLayout']>) => void
 }) {
+  const [active, setActive] = useState<'stamp' | 'signature'>('signature')
   const startDrag = (
     event: PointerEvent<HTMLElement>,
     layout: DraftOrder['stampLayout'],
@@ -705,7 +787,7 @@ function SignatureFreeformEditor({
       const dx = moveEvent.clientX - startX
       const dy = moveEvent.clientY - startY
       if (mode === 'resize') {
-        onChange({ width: Math.max(60, start.width + dx) })
+        onChange({ width: start.width + dx })
       } else {
         onChange({
           x: Math.round(start.x + (dx / rect.width) * 100),
@@ -723,17 +805,36 @@ function SignatureFreeformEditor({
 
   return (
     <div className="freeform-editor">
+      <div className="freeform-toolbar">
+        <button type="button" className={active === 'stamp' ? 'secondary strong' : 'secondary'} onClick={() => setActive('stamp')}>
+          Pilih Stempel
+        </button>
+        <button type="button" className={active === 'signature' ? 'secondary strong' : 'secondary'} onClick={() => setActive('signature')}>
+          Pilih TTD
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => (active === 'stamp' ? onStampChange({ x: 34, y: 24 }) : onSignatureChange({ x: 42, y: 32 }))}
+        >
+          Center
+        </button>
+      </div>
       <div className="freeform-area">
+        <div className="freeform-text top">
+          <b>Dengan hormat,</b>
+          <span>Apoteker Penanggung Jawab</span>
+        </div>
         <div
-          className="freeform-item stamp-item"
+          className={`freeform-item stamp-item ${active === 'stamp' ? 'active' : ''}`}
           style={{ left: `${stampLayout.x}%`, top: `${stampLayout.y}%`, width: stampLayout.width, opacity: stampLayout.opacity / 100, zIndex: stampLayout.zIndex }}
-          onPointerDown={(event) => startDrag(event, stampLayout, onStampChange, 'move')}
+          onPointerDown={(event) => { setActive('stamp'); startDrag(event, stampLayout, onStampChange, 'move') }}
         >
           <span>Stempel</span>
           <i onPointerDown={(event) => { event.stopPropagation(); startDrag(event, stampLayout, onStampChange, 'resize') }} />
         </div>
         <div
-          className="freeform-item signature-item"
+          className={`freeform-item signature-item ${active === 'signature' ? 'active' : ''}`}
           style={{
             left: `${signatureLayout.x}%`,
             top: `${signatureLayout.y}%`,
@@ -741,32 +842,46 @@ function SignatureFreeformEditor({
             opacity: signatureLayout.opacity / 100,
             zIndex: signatureLayout.zIndex,
           }}
-          onPointerDown={(event) => startDrag(event, signatureLayout, onSignatureChange, 'move')}
+          onPointerDown={(event) => { setActive('signature'); startDrag(event, signatureLayout, onSignatureChange, 'move') }}
         >
-          <span>Tanda tangan</span>
+          <span>TTD</span>
           <i onPointerDown={(event) => { event.stopPropagation(); startDrag(event, signatureLayout, onSignatureChange, 'resize') }} />
         </div>
+        <div className="freeform-name-zone">
+          <b>Nama Apoteker</b>
+          <span>No. SIPA</span>
+        </div>
       </div>
-      <p className="helper-note">Edit Posisi & Ukuran TTD / Stempel: geser elemen, atau tarik titik pojok untuk resize.</p>
+      <p className="helper-note">Area TTD & Stempel: objek otomatis ditahan di dalam area aman agar tidak keluar dari kertas/PDF.</p>
     </div>
   )
 }
 
 function Preview({
   order,
+  settings,
+  layoutDebug = false,
+  setLayoutDebug,
   onBack,
   onFinalize,
   onPdf,
 }: {
   order: Order
+  settings: ClinicSettings
+  layoutDebug?: boolean
+  setLayoutDebug?: (value: boolean) => void
   onBack?: () => void
   onFinalize?: () => void
   onPdf: () => void
 }) {
-  const visual = normalizeVisualSettings(order.visualSettings)
+  const resolvedOrder = resolveOrderAssets(order, settings)
+  const visual = normalizeVisualSettings(resolvedOrder.visualSettings)
   const design = order.selectedDesign || 'official-compact'
-  const stampLayout = order.stampLayout
-  const signatureLayout = order.signatureLayout
+  const designTokens = getDocumentDesign(design)
+  const stampLayout = resolvedOrder.stampLayout
+  const signatureLayout = resolvedOrder.signatureLayout
+  const stampBox = assetBox(stampLayout, 'stamp', 'web', design)
+  const signatureBox = assetBox(signatureLayout, 'signature', 'web', design)
   return (
     <div className="stack">
       <div className="preview-actions">
@@ -783,19 +898,37 @@ function Preview({
         <button className="secondary strong" type="button" onClick={onPdf}>
           <Download size={17} /> Generate PDF
         </button>
+        {setLayoutDebug ? (
+          <button className={layoutDebug ? 'secondary strong' : 'secondary'} type="button" onClick={() => setLayoutDebug(!layoutDebug)}>
+            Show PDF Layout Debug
+          </button>
+        ) : null}
       </div>
-      <article className={`paper actual-letter design-${design} status-${order.status === 'finalized' ? 'finalized' : 'draft'}`}>
+      <article
+        className={`paper actual-letter design-${design} status-${order.status === 'finalized' ? 'finalized' : 'draft'} ${layoutDebug ? 'layout-debug' : ''}`}
+        style={{
+          '--paper-pad-x': `${designTokens.page.webPaddingX}px`,
+          '--paper-pad-y': `${designTokens.page.webPaddingY}px`,
+          '--body-size': `${designTokens.font.webBody}px`,
+          '--body-line': String(designTokens.font.lineHeight),
+          '--title-size': `${designTokens.font.webTitle}px`,
+          '--signature-width': `${designTokens.signature.webWidth}px`,
+          '--signature-height': `${designTokens.signature.webHeight}px`,
+          '--table-border': designTokens.table.borderColor,
+          '--table-header': designTokens.table.headerBg,
+        } as CSSProperties}
+      >
         <header>
-          <div className={order.clinicSnapshot.logoUrl ? 'paper-logo' : 'paper-logo empty'}>
-            {order.clinicSnapshot.logoUrl ? <img src={order.clinicSnapshot.logoUrl} alt="Logo" /> : null}
+          <div className={resolvedOrder.clinicSnapshot.logoUrl ? 'paper-logo' : 'paper-logo empty'}>
+            {resolvedOrder.clinicSnapshot.logoUrl ? <img src={resolvedOrder.clinicSnapshot.logoUrl} alt="Logo" /> : null}
           </div>
           <div>
-            <h2>{order.clinicSnapshot.companyName}</h2>
-            {order.clinicSnapshot.nib ? <p>NIB: {order.clinicSnapshot.nib}</p> : null}
-            {order.clinicSnapshot.licenseNumber ? <p>Izin Klinik: {order.clinicSnapshot.licenseNumber}</p> : null}
-            {order.clinicSnapshot.address ? <p>{order.clinicSnapshot.address}</p> : null}
-            {[order.clinicSnapshot.contactNumber, order.clinicSnapshot.email].filter(Boolean).length ? (
-              <p>{[order.clinicSnapshot.contactNumber, order.clinicSnapshot.email].filter(Boolean).join(' | ')}</p>
+            <h2>{resolvedOrder.clinicSnapshot.companyName}</h2>
+            {resolvedOrder.clinicSnapshot.nib ? <p>NIB: {resolvedOrder.clinicSnapshot.nib}</p> : null}
+            {resolvedOrder.clinicSnapshot.licenseNumber ? <p>Izin Klinik: {resolvedOrder.clinicSnapshot.licenseNumber}</p> : null}
+            {resolvedOrder.clinicSnapshot.address ? <p>{resolvedOrder.clinicSnapshot.address}</p> : null}
+            {[resolvedOrder.clinicSnapshot.contactNumber, resolvedOrder.clinicSnapshot.email].filter(Boolean).length ? (
+              <p>{[resolvedOrder.clinicSnapshot.contactNumber, resolvedOrder.clinicSnapshot.email].filter(Boolean).join(' | ')}</p>
             ) : null}
           </div>
         </header>
@@ -840,37 +973,39 @@ function Preview({
             <p>Dengan hormat,</p>
             <p>Apoteker Penanggung Jawab</p>
             <div className="sign-box">
-              {order.pharmacistSnapshot.stampUrl ? (
+              {resolvedOrder.pharmacistSnapshot.stampUrl ? (
                 <img
                   className="stamp-preview"
-                  src={order.pharmacistSnapshot.stampUrl}
+                  src={resolvedOrder.pharmacistSnapshot.stampUrl}
                   alt="Stamp"
                   style={{
-                    left: `${stampLayout.x}%`,
-                    top: `${stampLayout.y}%`,
-                    width: stampLayout.width || visual.stampWidth,
-                    opacity: (stampLayout.opacity || visual.stampOpacity) / 100,
+                    left: stampBox.left,
+                    top: stampBox.top,
+                    width: stampBox.width,
+                    height: stampBox.height,
+                    opacity: stampBox.opacity || visual.stampOpacity / 100,
                     zIndex: stampLayout.zIndex,
                   }}
                 />
               ) : null}
-              {order.pharmacistSnapshot.signatureUrl ? (
+              {resolvedOrder.pharmacistSnapshot.signatureUrl ? (
                 <img
                   className="signature-preview"
-                  src={order.pharmacistSnapshot.signatureUrl}
+                  src={resolvedOrder.pharmacistSnapshot.signatureUrl}
                   alt="Signature"
                   style={{
-                    left: `${signatureLayout.x}%`,
-                    top: `${signatureLayout.y}%`,
-                    width: signatureLayout.width || visual.signatureWidth,
-                    opacity: (signatureLayout.opacity || visual.signatureOpacity) / 100,
+                    left: signatureBox.left,
+                    top: signatureBox.top,
+                    width: signatureBox.width,
+                    height: signatureBox.height,
+                    opacity: signatureBox.opacity || visual.signatureOpacity / 100,
                     zIndex: signatureLayout.zIndex,
                   }}
                 />
               ) : null}
             </div>
-            <b>{order.pharmacistSnapshot.name || '( Nama Apoteker )'}</b>
-            <p>No. SIPA: {order.pharmacistSnapshot.sipa || '........................'}</p>
+            <b>{resolvedOrder.pharmacistSnapshot.name || '( Nama Apoteker )'}</b>
+            <p>No. SIPA: {resolvedOrder.pharmacistSnapshot.sipa || '........................'}</p>
           </div>
         </footer>
       </article>
@@ -886,6 +1021,7 @@ function History({
   openDraft,
   duplicate,
   markVoid,
+  settings,
 }: {
   orders: Order[]
   currentDraft: DraftOrder | null
@@ -894,6 +1030,7 @@ function History({
   openDraft: (draft: DraftOrder) => void
   duplicate: (order: Order) => void
   markVoid: (order: Order) => void
+  settings: ClinicSettings
 }) {
   const [query, setQuery] = useState('')
   const filtered = orders.filter((order) => `${order.orderNumber} ${order.distributorSnapshot.name}`.toLowerCase().includes(query.toLowerCase()))
@@ -904,7 +1041,7 @@ function History({
           <button className="secondary" type="button" onClick={() => setSelected(null)}>
             Back
           </button>
-          <button className="secondary strong" type="button" onClick={() => downloadPdf(selected)}>
+          <button className="secondary strong" type="button" onClick={() => downloadPdf(selected, settings)}>
             <Download size={17} /> Download PDF Final
           </button>
           <button className="secondary" type="button" onClick={() => duplicate(selected)}>
@@ -915,7 +1052,7 @@ function History({
           </button>
         </div>
         {selected.status === 'void' ? <div className="void-note">Void reason: {selected.voidReason}</div> : null}
-        <Preview order={selected} onPdf={() => downloadPdf(selected)} />
+        <Preview order={selected} settings={settings} layoutDebug={false} onPdf={() => downloadPdf(selected, settings)} />
       </div>
     )
   }
@@ -965,7 +1102,7 @@ function History({
                   <button className="icon" type="button" onClick={() => setSelected(order)}>
                     <Eye size={16} />
                   </button>
-                  <button className="icon" type="button" onClick={() => downloadPdf(order)}>
+                  <button className="icon" type="button" onClick={() => downloadPdf(order, settings)}>
                     <Download size={16} />
                   </button>
                   <button className="icon" type="button" onClick={() => duplicate(order)}>
@@ -1097,7 +1234,12 @@ function SettingsPage({
   flash: (message: string) => void
 }) {
   const [form, setForm] = useState(settings || defaultSettings())
+  const [usage, setUsage] = useState(getStorageUsage())
   const patch = (patchValue: Partial<ClinicSettings>) => setForm({ ...form, ...patchValue })
+  const formatBytes = (bytes = 0) => {
+    if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  }
   const exportBackup = () => {
     const blob = new Blob([JSON.stringify(loadStore(), null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -1133,8 +1275,16 @@ function SettingsPage({
       <div className="image-preview">{form[key] ? <img src={form[key]} alt={label} /> : <ImagePlus size={22} />}</div>
       <label>
         {label}
-        <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && readImage(e.target.files[0], (value) => patch({ [key]: value }))} />
+        <input
+          type="file"
+          accept="image/*"
+          onChange={(e) =>
+            e.target.files?.[0] &&
+            readImage(e.target.files[0], key, (value, size) => patch({ [key]: value, imageSizes: { ...(form.imageSizes || {}), [key]: size } }))
+          }
+        />
       </label>
+      {form.imageSizes?.[key] ? <small>{formatBytes(form.imageSizes[key])}</small> : null}
     </div>
   )
   return (
@@ -1160,6 +1310,14 @@ function SettingsPage({
         <b>Backup & keamanan data lokal</b>
         <p>Data saat ini disimpan di browser ini. Untuk keamanan sebelum update besar, klik Export Backup.</p>
         <p>Data tersimpan per browser dan per domain. Data localhost, preview Vercel, dan production Vercel bisa berbeda.</p>
+        <div className={`storage-meter ${usage.percent >= 90 ? 'danger' : usage.percent >= 70 ? 'warning' : ''}`}>
+          <div>
+            <b>Storage browser: {formatBytes(usage.usedBytes)} digunakan</b>
+            <span>Perkiraan {usage.percent}% dari kuota lokal browser.</span>
+          </div>
+          <i style={{ width: `${Math.min(100, usage.percent)}%` }} />
+        </div>
+        {usage.percent >= 70 ? <p className="helper-note">Jika hampir penuh, klik Optimalkan Storage agar gambar lama yang terduplikasi dibersihkan.</p> : null}
         <div className="preset-row">
           <button type="button" className="secondary strong" onClick={exportBackup}>
             Export Backup JSON
@@ -1168,6 +1326,29 @@ function SettingsPage({
             Import Backup JSON
             <input type="file" accept="application/json" onChange={(e) => importBackup(e.target.files?.[0])} />
           </label>
+          <button
+            type="button"
+            className="secondary strong"
+            onClick={async () => {
+              const optimizedImages: Partial<ClinicSettings> = {}
+              const optimizedSizes = { ...(form.imageSizes || {}) }
+              for (const key of ['logoUrl', 'signatureUrl', 'stampUrl'] as const) {
+                if (!form[key]?.startsWith('data:image/')) continue
+                const result = await compressDataUrl(form[key], key, form.imageSizes?.[key])
+                optimizedImages[key] = result.value
+                optimizedSizes[key] = result.size
+              }
+              const saved = saveSettings({ ...form, ...optimizedImages, imageSizes: optimizedSizes })
+              setForm(saved)
+              setSettings(saved)
+              optimizeStorage()
+              refreshFromStore()
+              setUsage(getStorageUsage())
+              flash('Storage berhasil dioptimalkan.')
+            }}
+          >
+            Optimalkan Storage
+          </button>
         </div>
       </section>
       <section className="panel">

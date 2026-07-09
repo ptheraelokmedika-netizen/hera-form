@@ -16,6 +16,11 @@ export type ClinicSettings = {
   signatureWidth: number
   stampOpacity: number
   signatureOpacity: number
+  imageSizes?: {
+    logoUrl?: number
+    signatureUrl?: number
+    stampUrl?: number
+  }
   updatedAt: string
 }
 
@@ -90,6 +95,7 @@ export type SignatureAssetLayout = {
   x: number
   y: number
   width: number
+  widthUnit?: 'px' | 'percent'
   opacity: number
   zIndex: number
 }
