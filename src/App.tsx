@@ -302,6 +302,15 @@ function App() {
                     />
                   </label>
                   <label>
+                    Email distributor
+                    <input
+                      type="email"
+                      value={draft.distributorSnapshot.email}
+                      placeholder="Opsional"
+                      onChange={(e) => patchDraft({ distributorSnapshot: { ...draft.distributorSnapshot, email: e.target.value } })}
+                    />
+                  </label>
+                  <label>
                     Optional notes
                     <input
                       value={draft.distributorSnapshot.notes}
@@ -311,6 +320,11 @@ function App() {
                   </label>
                 </div>
               </div>
+              <p className="helper-note">
+                {draft.distributorId
+                  ? 'Kontak, email, dan alamat yang diedit di sini akan ikut diperbarui di master distributor setelah order difinalisasi.'
+                  : 'Alamat, kontak, dan email distributor boleh kosong. PDF hanya menampilkan data yang terisi.'}
+              </p>
             </section>
 
             <section className="panel">
@@ -446,19 +460,23 @@ function Preview({
       </div>
       <article className="paper">
         <header>
-          <div className="paper-logo">{order.clinicSnapshot.logoUrl ? <img src={order.clinicSnapshot.logoUrl} alt="Logo" /> : 'LOGO'}</div>
+          <div className={order.clinicSnapshot.logoUrl ? 'paper-logo' : 'paper-logo empty'}>
+            {order.clinicSnapshot.logoUrl ? <img src={order.clinicSnapshot.logoUrl} alt="Logo" /> : null}
+          </div>
           <div>
             <h2>{order.clinicSnapshot.companyName}</h2>
             {order.clinicSnapshot.nib ? <p>NIB: {order.clinicSnapshot.nib}</p> : null}
             {order.clinicSnapshot.licenseNumber ? <p>Izin Klinik: {order.clinicSnapshot.licenseNumber}</p> : null}
             {order.clinicSnapshot.address ? <p>{order.clinicSnapshot.address}</p> : null}
-            <p>{[order.clinicSnapshot.contactNumber, order.clinicSnapshot.email].filter(Boolean).join(' | ')}</p>
+            {[order.clinicSnapshot.contactNumber, order.clinicSnapshot.email].filter(Boolean).length ? (
+              <p>{[order.clinicSnapshot.contactNumber, order.clinicSnapshot.email].filter(Boolean).join(' | ')}</p>
+            ) : null}
           </div>
         </header>
         <h2 className="paper-title">SURAT PEMESANAN PRODUK</h2>
         <div className="meta">
           <span>Nomor</span>
-          <b>{order.orderNumber}</b>
+          <b>{order.orderNumber === 'DRAFT-BELUM-FINAL' ? 'DRAFT' : order.orderNumber}</b>
           <span>Tanggal</span>
           <b>{formatDate(order.orderDate)}</b>
         </div>
@@ -466,7 +484,9 @@ function Preview({
           <p>Kepada Yth.</p>
           <b>{order.distributorSnapshot.name}</b>
           {order.distributorSnapshot.address ? <p>{order.distributorSnapshot.address}</p> : null}
-          {order.distributorSnapshot.contactNumber ? <p>Kontak: {order.distributorSnapshot.contactNumber}</p> : null}
+          {[order.distributorSnapshot.contactNumber, order.distributorSnapshot.email].filter(Boolean).length ? (
+            <p>{[order.distributorSnapshot.contactNumber, order.distributorSnapshot.email].filter(Boolean).join(' | ')}</p>
+          ) : null}
         </section>
         <p>Dengan hormat,</p>
         <p>Bersama ini kami mengajukan pemesanan produk dengan rincian sebagai berikut:</p>
@@ -494,9 +514,10 @@ function Preview({
             <p>Dengan hormat,</p>
             <p>Apoteker Penanggung Jawab</p>
             <div className="sign-box">
-              {order.pharmacistSnapshot.signatureUrl ? <img src={order.pharmacistSnapshot.signatureUrl} alt="Signature" /> : null}
-              {order.pharmacistSnapshot.stampUrl ? <img src={order.pharmacistSnapshot.stampUrl} alt="Stamp" /> : null}
-              {!order.pharmacistSnapshot.signatureUrl && !order.pharmacistSnapshot.stampUrl ? <span>Tanda tangan / stempel</span> : null}
+              {order.pharmacistSnapshot.stampUrl ? <img className="stamp-preview" src={order.pharmacistSnapshot.stampUrl} alt="Stamp" /> : null}
+              {order.pharmacistSnapshot.signatureUrl ? (
+                <img className="signature-preview" src={order.pharmacistSnapshot.signatureUrl} alt="Signature" />
+              ) : null}
             </div>
             <b>{order.pharmacistSnapshot.name || '( Nama Apoteker )'}</b>
             <p>No. SIPA: {order.pharmacistSnapshot.sipa || '........................'}</p>
@@ -672,7 +693,7 @@ function DistributorPage({
             <div>
               <h3>{item.name}</h3>
               <p>{item.address || 'Alamat belum diisi'}</p>
-              <small>{item.contactNumber || 'Kontak belum diisi'}</small>
+              <small>{[item.contactNumber, item.email].filter(Boolean).join(' | ') || 'Kontak belum diisi'}</small>
             </div>
             <div className="row-actions">
               <button className="icon" type="button" onClick={() => setForm(item)}>

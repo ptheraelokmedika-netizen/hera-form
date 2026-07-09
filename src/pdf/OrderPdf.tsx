@@ -1,36 +1,56 @@
-import { Document, Image, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
+import { Document, Font, Image, Page, StyleSheet, Text, View } from '@react-pdf/renderer'
+import plusJakartaRegular from '@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-400-normal.woff'
+import plusJakartaSemiBold from '@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-600-normal.woff'
+import plusJakartaBold from '@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-700-normal.woff'
 import type { Order } from '../types/hera'
 import { formatDate } from '../storage/heraStorage'
 
+Font.register({
+  family: 'Plus Jakarta Sans',
+  fonts: [
+    { src: plusJakartaRegular, fontWeight: 400 },
+    { src: plusJakartaSemiBold, fontWeight: 600 },
+    { src: plusJakartaBold, fontWeight: 700 },
+  ],
+})
+
 const s = StyleSheet.create({
-  page: { padding: 38, fontSize: 10, fontFamily: 'Helvetica', color: '#24342f', lineHeight: 1.42 },
-  header: { flexDirection: 'row', gap: 14, paddingBottom: 14, borderBottom: '1.4 solid #c5a35b', marginBottom: 18 },
-  logoBox: { width: 62, height: 62, border: '1 solid #e6dcc6', alignItems: 'center', justifyContent: 'center' },
-  logo: { width: 58, height: 58, objectFit: 'contain' },
+  page: { padding: 38, fontSize: 9.2, fontFamily: 'Plus Jakarta Sans', color: '#24342f', lineHeight: 1.34 },
+  header: { flexDirection: 'row', gap: 12, paddingBottom: 11, borderBottom: '1 solid #c5a35b', marginBottom: 13 },
+  logoBox: { width: 58, height: 56, alignItems: 'center', justifyContent: 'center' },
+  logoSpacer: { width: 18, height: 56 },
+  logo: { width: 58, height: 56, objectFit: 'contain' },
   headerText: { flex: 1 },
-  company: { fontSize: 16, fontFamily: 'Helvetica-Bold', color: '#173d36', marginBottom: 4 },
-  muted: { color: '#5f6d67', marginBottom: 2 },
-  title: { textAlign: 'center', fontSize: 14, fontFamily: 'Helvetica-Bold', textDecoration: 'underline', marginBottom: 12 },
-  row: { flexDirection: 'row', marginBottom: 3 },
-  label: { width: 80, color: '#5f6d67' },
-  recipient: { marginVertical: 15 },
-  bold: { fontFamily: 'Helvetica-Bold' },
-  paragraph: { marginBottom: 9 },
-  table: { border: '1 solid #d9cfba', marginVertical: 12 },
-  tableHead: { flexDirection: 'row', backgroundColor: '#f4ead1', borderBottom: '1 solid #d9cfba', fontFamily: 'Helvetica-Bold' },
-  tableRow: { flexDirection: 'row', borderBottom: '1 solid #eee7d9', minHeight: 28 },
-  cell: { padding: 6, borderRight: '1 solid #eee7d9' },
-  no: { width: 32, textAlign: 'center' },
-  product: { width: 170 },
-  dosage: { width: 95 },
-  qty: { width: 78 },
+  company: { fontSize: 13.5, fontWeight: 700, color: '#173d36', marginBottom: 3 },
+  muted: { color: '#5f6d67', marginBottom: 1.5, fontSize: 8.6 },
+  title: {
+    textAlign: 'center',
+    fontSize: 12.5,
+    fontWeight: 700,
+    textDecoration: 'underline',
+    marginBottom: 9,
+    marginTop: 1,
+  },
+  metaBox: { marginBottom: 12 },
+  row: { flexDirection: 'row', marginBottom: 2.2 },
+  label: { width: 70, color: '#5f6d67' },
+  recipient: { marginBottom: 12 },
+  bold: { fontWeight: 700 },
+  paragraph: { marginBottom: 7 },
+  table: { border: '1 solid #d9cfba', marginTop: 8, marginBottom: 12 },
+  tableHead: { flexDirection: 'row', backgroundColor: '#f7f1e4', borderBottom: '1 solid #d9cfba', fontWeight: 700 },
+  tableRow: { flexDirection: 'row', borderBottom: '1 solid #eee7d9', minHeight: 22 },
+  cell: { padding: 4.6, borderRight: '1 solid #eee7d9' },
+  no: { width: 28, textAlign: 'center' },
+  product: { width: 182 },
+  dosage: { width: 92 },
+  qty: { width: 76 },
   notes: { flex: 1, borderRight: 0 },
-  signatureWrap: { marginTop: 20, alignItems: 'flex-end' },
-  signature: { width: 220 },
-  signArea: { height: 78, marginVertical: 8, position: 'relative' },
-  signImg: { position: 'absolute', left: 0, top: 6, width: 130, height: 56, objectFit: 'contain' },
-  stampImg: { position: 'absolute', right: 16, top: 2, width: 82, height: 70, objectFit: 'contain' },
-  placeholder: { marginTop: 18, padding: 8, border: '1 dashed #d8cdb9', color: '#9a907c', fontSize: 8, textAlign: 'center' },
+  signatureWrap: { marginTop: 12, alignItems: 'flex-end' },
+  signature: { width: 250 },
+  signArea: { height: 98, marginTop: 2, marginBottom: -1, position: 'relative' },
+  signImg: { position: 'absolute', left: 4, top: 26, width: 178, height: 70, objectFit: 'contain' },
+  stampImg: { position: 'absolute', left: 118, top: -5, width: 128, height: 105, objectFit: 'contain' },
 })
 
 export function OrderPdf({ order }: { order: Order }) {
@@ -43,12 +63,20 @@ export function OrderPdf({ order }: { order: Order }) {
     c.address,
     [c.contactNumber, c.email].filter(Boolean).join(' | '),
   ].filter(Boolean)
+  const orderNumber = order.orderNumber === 'DRAFT-BELUM-FINAL' ? 'DRAFT' : order.orderNumber
+  const distributorContact = [d.contactNumber, d.email].filter(Boolean).join(' | ')
 
   return (
     <Document title={`Surat Pemesanan ${order.orderNumber}`}>
       <Page size="A4" style={s.page} wrap>
         <View style={s.header} fixed>
-          <View style={s.logoBox}>{c.logoUrl ? <Image src={c.logoUrl} style={s.logo} /> : <Text>LOGO</Text>}</View>
+          {c.logoUrl ? (
+            <View style={s.logoBox}>
+              <Image src={c.logoUrl} style={s.logo} />
+            </View>
+          ) : (
+            <View style={s.logoSpacer} />
+          )}
           <View style={s.headerText}>
             <Text style={s.company}>{c.companyName}</Text>
             {lines.map((line) => (
@@ -60,10 +88,10 @@ export function OrderPdf({ order }: { order: Order }) {
         </View>
 
         <Text style={s.title}>SURAT PEMESANAN PRODUK</Text>
-        <View>
+        <View style={s.metaBox}>
           <View style={s.row}>
             <Text style={s.label}>Nomor</Text>
-            <Text>: {order.orderNumber}</Text>
+            <Text>: {orderNumber}</Text>
           </View>
           <View style={s.row}>
             <Text style={s.label}>Tanggal</Text>
@@ -75,7 +103,7 @@ export function OrderPdf({ order }: { order: Order }) {
           <Text>Kepada Yth.</Text>
           <Text style={s.bold}>{d.name}</Text>
           {d.address ? <Text>{d.address}</Text> : null}
-          {d.contactNumber ? <Text>Kontak: {d.contactNumber}</Text> : null}
+          {distributorContact ? <Text>{distributorContact}</Text> : null}
         </View>
 
         <Text style={s.paragraph}>Dengan hormat,</Text>
@@ -109,8 +137,8 @@ export function OrderPdf({ order }: { order: Order }) {
             <Text>Dengan hormat,</Text>
             <Text>Apoteker Penanggung Jawab</Text>
             <View style={s.signArea}>
-              {p.signatureUrl ? <Image src={p.signatureUrl} style={s.signImg} /> : <Text style={s.placeholder}>Tanda tangan</Text>}
               {p.stampUrl ? <Image src={p.stampUrl} style={s.stampImg} /> : null}
+              {p.signatureUrl ? <Image src={p.signatureUrl} style={s.signImg} /> : null}
             </View>
             <Text style={s.bold}>{p.name || '( Nama Apoteker )'}</Text>
             <Text>No. SIPA: {p.sipa || '........................'}</Text>

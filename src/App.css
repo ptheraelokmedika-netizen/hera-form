@@ -266,6 +266,16 @@ input:disabled {
   background: rgba(244, 234, 209, 0.58);
 }
 
+.helper-note {
+  margin: 14px 0 0;
+  padding: 11px 13px;
+  border-radius: 14px;
+  color: #6a5a35;
+  background: rgba(244, 234, 209, 0.62);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .mini-logo,
 .paper-logo,
 .image-preview {
@@ -408,29 +418,41 @@ button.secondary.strong {
 .paper {
   max-width: 880px;
   margin: 0 auto;
-  padding: 42px;
+  padding: 38px 42px;
   border-radius: 12px;
   background: var(--solid);
   color: #24342f;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .paper header {
   display: flex;
-  gap: 16px;
-  padding-bottom: 16px;
-  border-bottom: 2px solid var(--gold);
+  gap: 14px;
+  padding-bottom: 13px;
+  border-bottom: 1.5px solid var(--gold);
 }
 
 .paper-logo {
-  width: 72px;
-  height: 72px;
-  border: 1px solid var(--line);
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
+  border: 0;
+  background: transparent;
+}
+
+.paper-logo.empty {
+  flex-basis: 26px;
+  width: 26px;
+  height: 64px;
 }
 
 .paper-title {
-  margin: 22px 0 16px;
+  margin: 16px 0 12px;
   text-align: center;
   text-decoration: underline;
+  text-underline-offset: 4px;
+  font-size: 18px;
 }
 
 .meta {
@@ -441,12 +463,12 @@ button.secondary.strong {
 }
 
 .recipient {
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .pdf-table {
   border: 1px solid #d9cfba;
-  margin: 14px 0 20px;
+  margin: 12px 0 16px;
 }
 
 .pdf-table > div {
@@ -460,7 +482,7 @@ button.secondary.strong {
 
 .pdf-table span,
 .pdf-table b {
-  padding: 9px;
+  padding: 7px 8px;
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
@@ -468,28 +490,41 @@ button.secondary.strong {
 .signature {
   display: flex;
   justify-content: flex-end;
-  margin-top: 26px;
+  margin-top: 18px;
 }
 
 .signature > div {
-  width: 250px;
+  width: 300px;
 }
 
 .sign-box {
-  height: 90px;
-  margin: 8px 0;
-  border: 1px dashed #d8cdb9;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: #9a907c;
+  position: relative;
+  height: 118px;
+  margin: 2px 0 -2px;
+  border: 0;
+  background: transparent;
 }
 
-.sign-box img {
-  max-width: 110px;
-  max-height: 76px;
+.stamp-preview,
+.signature-preview {
+  position: absolute;
   object-fit: contain;
+  border: 0;
+  background: transparent;
+}
+
+.stamp-preview {
+  width: 150px;
+  height: 120px;
+  left: 118px;
+  top: -4px;
+}
+
+.signature-preview {
+  width: 210px;
+  height: 92px;
+  left: 10px;
+  top: 28px;
 }
 
 .search {
@@ -552,7 +587,7 @@ button.secondary.strong {
   width: 74px;
   height: 74px;
   border-radius: 20px;
-  border: 1px dashed #d6c49e;
+  border: 1px solid rgba(214, 196, 158, 0.55);
 }
 
 .toast {
