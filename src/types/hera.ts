@@ -12,6 +12,10 @@ export type ClinicSettings = {
   pharmacistSipa: string
   signatureUrl: string
   stampUrl: string
+  stampWidth: number
+  signatureWidth: number
+  stampOpacity: number
+  signatureOpacity: number
   updatedAt: string
 }
 
@@ -48,6 +52,7 @@ export type Order = {
     signatureUrl: string
     stampUrl: string
   }
+  visualSettings: SignatureVisualSettings
   items: OrderItem[]
   status: OrderStatus
   createdAt: string
@@ -62,9 +67,27 @@ export type DraftOrder = {
   orderDate: string
   distributorId: string
   distributorSnapshot: Pick<Distributor, 'name' | 'address' | 'contactNumber' | 'email' | 'notes'>
+  visualSettings: SignatureVisualSettings
   items: OrderItem[]
   createdAt: string
   updatedAt: string
 }
 
-export type Page = 'create' | 'history' | 'distributors' | 'settings'
+export type SignatureVisualSettings = {
+  stampWidth: number
+  signatureWidth: number
+  stampOpacity: number
+  signatureOpacity: number
+}
+
+export type HeraStorage = {
+  version: 1
+  settings: ClinicSettings
+  distributors: Distributor[]
+  orders: Order[]
+  currentDraft: DraftOrder | null
+  selectedDesign?: string
+  updatedAt: string
+}
+
+export type Page = 'create' | 'history' | 'distributors' | 'settings' | 'designs'

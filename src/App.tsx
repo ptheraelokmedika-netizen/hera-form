@@ -30,25 +30,30 @@ import {
   deleteDistributor,
   emptyDraft,
   emptyItem,
+  backupFilename,
   finalizeOrder,
   formatDate,
-  getDistributors,
-  getOrders,
-  getSettings,
+  getCurrentDraft,
+  loadStore,
+  mergeImportedStore,
   now,
+  normalizeVisualSettings,
   sanitizeFilename,
   saveDistributors,
+  saveCurrentDraft,
+  saveSelectedDesign,
   saveSettings,
   uid,
   voidOrder,
 } from './storage/heraStorage'
-import type { ClinicSettings, Distributor, DraftOrder, Order, Page } from './types/hera'
+import type { ClinicSettings, Distributor, DraftOrder, HeraStorage, Order, Page, SignatureVisualSettings } from './types/hera'
 
 const navItems: Array<{ key: Page; label: string; Icon: typeof FilePlus2 }> = [
   { key: 'create', label: 'Buat Surat', Icon: FilePlus2 },
   { key: 'history', label: 'History', Icon: FileClock },
   { key: 'distributors', label: 'Distributor', Icon: Store },
   { key: 'settings', label: 'Settings', Icon: Settings },
+  { key: 'designs', label: 'Pilihan Desain Surat', Icon: FileCheck2 },
 ]
 
 const readImage = (file: File, done: (value: string) => void) => {
@@ -78,14 +83,17 @@ const validateDraft = (draft: DraftOrder) => {
 }
 
 function App() {
+  const initialStore = useMemo(() => loadStore(), [])
   const [page, setPage] = useState<Page>('create')
-  const [settings, setSettings] = useState<ClinicSettings>(getSettings)
-  const [distributors, setDistributors] = useState<Distributor[]>(getDistributors)
-  const [orders, setOrders] = useState<Order[]>(getOrders)
-  const [draft, setDraft] = useState<DraftOrder>(emptyDraft)
+  const [settings, setSettings] = useState<ClinicSettings>(initialStore.settings)
+  const [distributors, setDistributors] = useState<Distributor[]>(initialStore.distributors)
+  const [orders, setOrders] = useState<Order[]>(initialStore.orders)
+  const [draft, setDraft] = useState<DraftOrder>(initialStore.currentDraft || emptyDraft(initialStore.settings))
   const [preview, setPreview] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [notice, setNotice] = useState('')
+  const [draftSavedAt, setDraftSavedAt] = useState(draft.updatedAt)
+  const [selectedDesign, setSelectedDesign] = useState(initialStore.selectedDesign || '')
 
   const activeDistributors = distributors.filter((item) => !item.isDeleted)
   const stats = useMemo(
@@ -102,7 +110,18 @@ function App() {
     window.setTimeout(() => setNotice(''), 2400)
   }
 
-  const patchDraft = (patch: Partial<DraftOrder>) => setDraft({ ...draft, ...patch, updatedAt: now() })
+  const persistDraft = (nextDraft: DraftOrder | null, message?: string) => {
+    saveCurrentDraft(nextDraft)
+    if (nextDraft) setDraftSavedAt(nextDraft.updatedAt)
+    if (message) flash(message)
+  }
+
+  const patchDraft = (patch: Partial<DraftOrder>) => {
+    const nextDraft = { ...draft, ...patch, updatedAt: now() }
+    setDraft(nextDraft)
+    window.setTimeout(() => persistDraft(nextDraft), 450)
+  }
+
   const makePreviewOrder = (): Order => ({
     id: draft.id,
     orderNumber: 'DRAFT-BELUM-FINAL',
@@ -116,6 +135,7 @@ function App() {
       signatureUrl: settings.signatureUrl,
       stampUrl: settings.stampUrl,
     },
+    visualSettings: normalizeVisualSettings(draft.visualSettings),
     items: draft.items.filter((item) => item.productName.trim() || item.quantity.trim()),
     status: 'draft',
     createdAt: draft.createdAt,
@@ -131,8 +151,9 @@ function App() {
     if (!confirm('Finalisasi order? Setelah final, data akan terkunci dan tidak bisa diedit diam-diam.')) return
     const order = finalizeOrder(draft, settings)
     setOrders([order, ...orders])
-    setDistributors(getDistributors())
-    setDraft(emptyDraft())
+    setDistributors(loadStore().distributors)
+    setDraft(emptyDraft(settings))
+    persistDraft(null)
     setPreview(false)
     setPage('history')
     flash(`Order ${order.orderNumber} finalized.`)
@@ -140,18 +161,21 @@ function App() {
   }
 
   const duplicateOrder = (order: Order) => {
-    setDraft({
+    const nextDraft = {
       id: uid('draft'),
       orderDate: new Date().toISOString().slice(0, 10),
       distributorId: order.distributorId,
       distributorSnapshot: { ...order.distributorSnapshot },
+      visualSettings: normalizeVisualSettings(order.visualSettings),
       items: order.items.map((item) => ({ ...item, id: uid('item') })),
       createdAt: now(),
       updatedAt: now(),
-    })
+    }
+    setDraft(nextDraft)
     setSelectedOrder(null)
     setPreview(false)
     setPage('create')
+    persistDraft(nextDraft)
     flash('Order disalin sebagai draft baru.')
   }
 
@@ -250,7 +274,25 @@ function App() {
                   <b>{settings.companyName}</b>
                   <p>{[settings.nib && `NIB ${settings.nib}`, settings.licenseNumber, settings.email].filter(Boolean).join(' | ')}</p>
                 </div>
-                <span className="badge warm">Snapshot saat finalize</span>
+              <span className="badge warm">Snapshot saat finalize</span>
+            </div>
+              <div className="draft-toolbar">
+                <span>Draft tersimpan otomatis: {new Date(draftSavedAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</span>
+                <button type="button" className="secondary" onClick={() => persistDraft(draft, 'Draft disimpan manual.')}>
+                  Simpan Draft
+                </button>
+                <button
+                  type="button"
+                  className="danger-btn"
+                  onClick={() => {
+                    if (!confirm('Buang draft saat ini?')) return
+                    const nextDraft = emptyDraft(settings)
+                    setDraft(nextDraft)
+                    persistDraft(null, 'Draft dibuang.')
+                  }}
+                >
+                  Discard Draft
+                </button>
               </div>
             </section>
 
@@ -380,6 +422,13 @@ function App() {
               </div>
             </section>
 
+            <SignatureControls
+              title="Pengaturan TTD & Stempel Surat Ini"
+              value={draft.visualSettings}
+              defaults={settings}
+              onChange={(visualSettings) => patchDraft({ visualSettings })}
+            />
+
             <div className="actions">
               <button
                 className="primary"
@@ -403,8 +452,15 @@ function App() {
         {page === 'history' ? (
           <History
             orders={orders}
+            currentDraft={getCurrentDraft()}
             selected={selectedOrder}
             setSelected={setSelectedOrder}
+            openDraft={(nextDraft) => {
+              setDraft(nextDraft)
+              setPreview(false)
+              setSelectedOrder(null)
+              setPage('create')
+            }}
             duplicate={duplicateOrder}
             markVoid={markVoid}
           />
@@ -414,7 +470,34 @@ function App() {
           <DistributorPage distributors={distributors} setDistributors={setDistributors} flash={flash} />
         ) : null}
 
-        {page === 'settings' ? <SettingsPage settings={settings} setSettings={setSettings} flash={flash} /> : null}
+        {page === 'settings' ? (
+          <SettingsPage
+            settings={settings}
+            setSettings={(nextSettings) => {
+              setSettings(nextSettings)
+              setDraft({ ...draft, visualSettings: normalizeVisualSettings(draft.visualSettings || nextSettings) })
+            }}
+            refreshFromStore={() => {
+              const store = loadStore()
+              setSettings(store.settings)
+              setDistributors(store.distributors)
+              setOrders(store.orders)
+              setDraft(store.currentDraft || emptyDraft(store.settings))
+              setSelectedDesign(store.selectedDesign || '')
+            }}
+            flash={flash}
+          />
+        ) : null}
+        {page === 'designs' ? (
+          <DesignOptionsPage
+            selectedDesign={selectedDesign}
+            onSelect={(id) => {
+              setSelectedDesign(id)
+              saveSelectedDesign(id)
+              flash('Pilihan desain disimpan sementara. Belum diterapkan ke PDF asli.')
+            }}
+          />
+        ) : null}
       </main>
     </div>
   )
@@ -432,6 +515,94 @@ function Title({ icon, title, text }: { icon: ReactNode; title: string; text: st
   )
 }
 
+function NumberSlider({
+  label,
+  value,
+  min,
+  max,
+  suffix = 'px',
+  onChange,
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  suffix?: string
+  onChange: (value: number) => void
+}) {
+  return (
+    <label className="slider-field">
+      <span>{label}</span>
+      <div>
+        <input type="range" min={min} max={max} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+        <input type="number" min={min} max={max} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+        <small>{suffix}</small>
+      </div>
+    </label>
+  )
+}
+
+function SignatureControls({
+  title,
+  value,
+  defaults,
+  onChange,
+}: {
+  title: string
+  value: SignatureVisualSettings
+  defaults: Partial<SignatureVisualSettings>
+  onChange: (value: SignatureVisualSettings) => void
+}) {
+  const visual = normalizeVisualSettings(value)
+  const patch = (patchValue: Partial<SignatureVisualSettings>) => onChange(normalizeVisualSettings({ ...visual, ...patchValue }))
+  const preset = (stampWidth: number, signatureWidth: number) => patch({ stampWidth, signatureWidth })
+  return (
+    <section className="panel">
+      <Title icon={<PenLine size={18} />} title={title} text="Ukuran ini ikut tersimpan di draft dan snapshot order finalized." />
+      <div className="preset-row">
+        <button type="button" className="secondary" onClick={() => preset(120, 160)}>
+          Kecil
+        </button>
+        <button type="button" className="secondary" onClick={() => preset(160, 220)}>
+          Normal
+        </button>
+        <button type="button" className="secondary" onClick={() => preset(210, 280)}>
+          Besar
+        </button>
+        <button type="button" className="secondary" onClick={() => onChange(normalizeVisualSettings(defaults))}>
+          Reset ke Default
+        </button>
+      </div>
+      <div className="grid two">
+        <NumberSlider label="Ukuran Stempel" value={visual.stampWidth} min={80} max={260} onChange={(stampWidth) => patch({ stampWidth })} />
+        <NumberSlider
+          label="Ukuran Tanda Tangan"
+          value={visual.signatureWidth}
+          min={100}
+          max={320}
+          onChange={(signatureWidth) => patch({ signatureWidth })}
+        />
+        <NumberSlider
+          label="Transparansi Stempel"
+          value={visual.stampOpacity}
+          min={40}
+          max={100}
+          suffix="%"
+          onChange={(stampOpacity) => patch({ stampOpacity })}
+        />
+        <NumberSlider
+          label="Transparansi Tanda Tangan"
+          value={visual.signatureOpacity}
+          min={60}
+          max={100}
+          suffix="%"
+          onChange={(signatureOpacity) => patch({ signatureOpacity })}
+        />
+      </div>
+    </section>
+  )
+}
+
 function Preview({
   order,
   onBack,
@@ -443,6 +614,7 @@ function Preview({
   onFinalize?: () => void
   onPdf: () => void
 }) {
+  const visual = normalizeVisualSettings(order.visualSettings)
   return (
     <div className="stack">
       <div className="preview-actions">
@@ -514,9 +686,21 @@ function Preview({
             <p>Dengan hormat,</p>
             <p>Apoteker Penanggung Jawab</p>
             <div className="sign-box">
-              {order.pharmacistSnapshot.stampUrl ? <img className="stamp-preview" src={order.pharmacistSnapshot.stampUrl} alt="Stamp" /> : null}
+              {order.pharmacistSnapshot.stampUrl ? (
+                <img
+                  className="stamp-preview"
+                  src={order.pharmacistSnapshot.stampUrl}
+                  alt="Stamp"
+                  style={{ width: visual.stampWidth, opacity: visual.stampOpacity / 100 }}
+                />
+              ) : null}
               {order.pharmacistSnapshot.signatureUrl ? (
-                <img className="signature-preview" src={order.pharmacistSnapshot.signatureUrl} alt="Signature" />
+                <img
+                  className="signature-preview"
+                  src={order.pharmacistSnapshot.signatureUrl}
+                  alt="Signature"
+                  style={{ width: visual.signatureWidth, opacity: visual.signatureOpacity / 100 }}
+                />
               ) : null}
             </div>
             <b>{order.pharmacistSnapshot.name || '( Nama Apoteker )'}</b>
@@ -530,14 +714,18 @@ function Preview({
 
 function History({
   orders,
+  currentDraft,
   selected,
   setSelected,
+  openDraft,
   duplicate,
   markVoid,
 }: {
   orders: Order[]
+  currentDraft: DraftOrder | null
   selected: Order | null
   setSelected: (order: Order | null) => void
+  openDraft: (draft: DraftOrder) => void
   duplicate: (order: Order) => void
   markVoid: (order: Order) => void
 }) {
@@ -578,6 +766,18 @@ function History({
         </div>
       </div>
       <section className="panel">
+        {currentDraft ? (
+          <div className="draft-history-row">
+            <div>
+              <span className="badge warm">Draft</span>
+              <b>{currentDraft.distributorSnapshot.name || 'Draft belum diberi distributor'}</b>
+              <p>{formatDate(currentDraft.orderDate)} | {currentDraft.items.length} item</p>
+            </div>
+            <button className="secondary" type="button" onClick={() => openDraft(currentDraft)}>
+              Buka & Edit Draft
+            </button>
+          </div>
+        ) : null}
         {filtered.length ? (
           <div className="history-table">
             <div className="history-head">
@@ -722,14 +922,46 @@ function DistributorPage({
 function SettingsPage({
   settings,
   setSettings,
+  refreshFromStore,
   flash,
 }: {
   settings: ClinicSettings
   setSettings: (settings: ClinicSettings) => void
+  refreshFromStore: () => void
   flash: (message: string) => void
 }) {
   const [form, setForm] = useState(settings || defaultSettings())
   const patch = (patchValue: Partial<ClinicSettings>) => setForm({ ...form, ...patchValue })
+  const exportBackup = () => {
+    const blob = new Blob([JSON.stringify(loadStore(), null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = backupFilename()
+    a.click()
+    URL.revokeObjectURL(url)
+    flash('Backup JSON berhasil diekspor.')
+  }
+  const importBackup = (file?: File) => {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || '')) as HeraStorage
+        if (parsed.version !== 1 || !parsed.settings || !Array.isArray(parsed.distributors) || !Array.isArray(parsed.orders)) {
+          throw new Error('Invalid shape')
+        }
+        const replace = confirm('Pilih OK untuk REPLACE semua data saat ini. Pilih Cancel untuk MERGE dengan data saat ini.')
+        if (!confirm(`${replace ? 'Replace' : 'Merge'} data dari backup ini sekarang?`)) return
+        mergeImportedStore(parsed, replace ? 'replace' : 'merge')
+        refreshFromStore()
+        flash('Backup berhasil diimpor.')
+      } catch {
+        alert('File backup tidak valid.')
+      }
+    }
+    reader.readAsText(file)
+  }
   const imageField = (label: string, key: 'logoUrl' | 'signatureUrl' | 'stampUrl') => (
     <div className="image-field">
       <div className="image-preview">{form[key] ? <img src={form[key]} alt={label} /> : <ImagePlus size={22} />}</div>
@@ -758,6 +990,20 @@ function SettingsPage({
           <Save size={17} /> Simpan Settings
         </button>
       </div>
+      <section className="panel info-panel">
+        <b>Backup & keamanan data lokal</b>
+        <p>Data saat ini disimpan di browser ini. Untuk keamanan sebelum update besar, klik Export Backup.</p>
+        <p>Data tersimpan per browser dan per domain. Data localhost, preview Vercel, dan production Vercel bisa berbeda.</p>
+        <div className="preset-row">
+          <button type="button" className="secondary strong" onClick={exportBackup}>
+            Export Backup JSON
+          </button>
+          <label className="import-button">
+            Import Backup JSON
+            <input type="file" accept="application/json" onChange={(e) => importBackup(e.target.files?.[0])} />
+          </label>
+        </div>
+      </section>
       <section className="panel">
         <Title icon={<Settings size={18} />} title="Clinic Identity" text="Data ini menjadi snapshot saat order finalized." />
         {imageField('Logo upload', 'logoUrl')}
@@ -805,6 +1051,130 @@ function SettingsPage({
           {imageField('Clinic stamp image upload', 'stampUrl')}
         </div>
       </section>
+      <SignatureControls
+        title="Default Ukuran TTD & Stempel"
+        value={normalizeVisualSettings(form)}
+        defaults={defaultSettings()}
+        onChange={(visualSettings) => patch(visualSettings)}
+      />
+    </div>
+  )
+}
+
+const mockupData = {
+  company: 'PT HERA ELOK MEDIKA',
+  nib: '2808230057848',
+  license: '28082300578480001',
+  address: 'Komplek Riau Business Centre Blok D19, Pekanbaru, Riau',
+  contact: '082173518808',
+  email: 'ptheraelokmedika@gmail.com',
+  distributor: 'PT Mensa Bina Sukses',
+  distributorAddress: 'Jl SM Amin Komplek Pergudangan Angkasa Blok C No 1',
+  orderNumber: 'SP-HERA/202607/0001',
+  date: '09 Juli 2026',
+  pharmacist: 'apt. Deddy Hasan Putra Sianturi, S. Farm',
+  sipa: '122/05.15/DPMPTSP/V/2024',
+  items: [
+    ['Rejuran Healer', 'Injeksi', '2 box', 'Untuk tindakan klinik'],
+    ['Lidocaine', 'Ampul', '10 ampul', '-'],
+    ['Cannula 25G', 'Alat medis', '20 pcs', '-'],
+  ],
+}
+
+const designOptions = [
+  { id: 'official-compact', name: 'Official Compact', desc: 'Surat klinik resmi, ringkas, dan cocok untuk distributor formal.' },
+  { id: 'premium-editorial', name: 'Premium Editorial', desc: 'Stationery klinik premium dengan ritme visual lebih modern.' },
+  { id: 'apothecary-professional', name: 'Apothecary Professional', desc: 'Struktur apoteker yang rapi dengan blok informasi tegas.' },
+  { id: 'minimal-legal', name: 'Minimal Legal Letter', desc: 'Paling matang, minimal, dan sangat formal.' },
+  { id: 'modern-clinic-admin', name: 'Modern Clinic Admin', desc: 'Lebih fresh dan Gen Z, tetap printable dan resmi.' },
+]
+
+function DesignOptionsPage({ selectedDesign, onSelect }: { selectedDesign: string; onSelect: (id: string) => void }) {
+  return (
+    <div className="stack">
+      <div className="page-title">
+        <div>
+          <small>Mockup Only</small>
+          <h2>Pilihan Desain Surat</h2>
+          <p>Preview ini memakai data contoh dan belum mengubah PDF asli atau data order.</p>
+        </div>
+      </div>
+      <section className="design-grid">
+        {designOptions.map((option) => (
+          <article className="design-card" key={option.id}>
+            <div className="design-card-head">
+              <div>
+                <h3>{option.name}</h3>
+                <p>{option.desc}</p>
+              </div>
+              {selectedDesign === option.id ? <span className="badge good">Selected</span> : null}
+            </div>
+            <LetterMockup variant={option.id} />
+            <button type="button" className="primary" onClick={() => onSelect(option.id)}>
+              Pilih desain ini
+            </button>
+          </article>
+        ))}
+      </section>
+    </div>
+  )
+}
+
+function LetterMockup({ variant }: { variant: string }) {
+  return (
+    <div className={`mock-paper ${variant}`}>
+      <header>
+        <div className="mock-mark">H</div>
+        <div>
+          <h4>{mockupData.company}</h4>
+          <p>NIB: {mockupData.nib}</p>
+          <p>Izin Klinik: {mockupData.license}</p>
+          <p>{mockupData.address}</p>
+          <p>{mockupData.contact} | {mockupData.email}</p>
+        </div>
+      </header>
+      <div className="mock-title">SURAT PEMESANAN PRODUK</div>
+      <div className="mock-meta">
+        <span>Nomor</span>
+        <b>{mockupData.orderNumber}</b>
+        <span>Tanggal</span>
+        <b>{mockupData.date}</b>
+      </div>
+      <section className="mock-recipient">
+        <p>Kepada Yth.</p>
+        <b>{mockupData.distributor}</b>
+        <p>{mockupData.distributorAddress}</p>
+      </section>
+      <p>Dengan hormat,</p>
+      <p>Bersama ini kami mengajukan pemesanan produk dengan rincian sebagai berikut:</p>
+      <div className="mock-table">
+        <div>
+          <b>No</b>
+          <b>Nama Produk</b>
+          <b>Bentuk</b>
+          <b>Qty</b>
+          <b>Keterangan</b>
+        </div>
+        {mockupData.items.map((item, index) => (
+          <div key={item[0]}>
+            <span>{index + 1}</span>
+            {item.map((cell) => (
+              <span key={cell}>{cell}</span>
+            ))}
+          </div>
+        ))}
+      </div>
+      <p>Demikian surat pemesanan ini kami sampaikan. Atas perhatian dan kerja samanya, kami ucapkan terima kasih.</p>
+      <footer>
+        <p>Dengan hormat,</p>
+        <p>Apoteker Penanggung Jawab</p>
+        <div className="mock-signature">
+          <span className="mock-stamp" />
+          <span className="mock-sign" />
+        </div>
+        <b>{mockupData.pharmacist}</b>
+        <p>No. SIPA: {mockupData.sipa}</p>
+      </footer>
     </div>
   )
 }

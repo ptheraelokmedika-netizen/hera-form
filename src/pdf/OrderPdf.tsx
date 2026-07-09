@@ -3,7 +3,7 @@ import plusJakartaRegular from '@fontsource/plus-jakarta-sans/files/plus-jakarta
 import plusJakartaSemiBold from '@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-600-normal.woff'
 import plusJakartaBold from '@fontsource/plus-jakarta-sans/files/plus-jakarta-sans-latin-700-normal.woff'
 import type { Order } from '../types/hera'
-import { formatDate } from '../storage/heraStorage'
+import { formatDate, normalizeVisualSettings } from '../storage/heraStorage'
 
 Font.register({
   family: 'Plus Jakarta Sans',
@@ -48,15 +48,16 @@ const s = StyleSheet.create({
   notes: { flex: 1, borderRight: 0 },
   signatureWrap: { marginTop: 12, alignItems: 'flex-end' },
   signature: { width: 250 },
-  signArea: { height: 98, marginTop: 2, marginBottom: -1, position: 'relative' },
-  signImg: { position: 'absolute', left: 4, top: 26, width: 178, height: 70, objectFit: 'contain' },
-  stampImg: { position: 'absolute', left: 118, top: -5, width: 128, height: 105, objectFit: 'contain' },
+  signArea: { height: 108, marginTop: 2, marginBottom: -4, position: 'relative' },
+  signImg: { position: 'absolute', left: 4, top: 34, objectFit: 'contain' },
+  stampImg: { position: 'absolute', left: 104, top: -3, objectFit: 'contain' },
 })
 
 export function OrderPdf({ order }: { order: Order }) {
   const c = order.clinicSnapshot
   const d = order.distributorSnapshot
   const p = order.pharmacistSnapshot
+  const visual = normalizeVisualSettings(order.visualSettings)
   const lines = [
     c.nib ? `NIB: ${c.nib}` : '',
     c.licenseNumber ? `Izin Klinik: ${c.licenseNumber}` : '',
@@ -137,8 +138,21 @@ export function OrderPdf({ order }: { order: Order }) {
             <Text>Dengan hormat,</Text>
             <Text>Apoteker Penanggung Jawab</Text>
             <View style={s.signArea}>
-              {p.stampUrl ? <Image src={p.stampUrl} style={s.stampImg} /> : null}
-              {p.signatureUrl ? <Image src={p.signatureUrl} style={s.signImg} /> : null}
+              {p.stampUrl ? (
+                <Image
+                  src={p.stampUrl}
+                  style={[s.stampImg, { width: visual.stampWidth * 0.72, height: visual.stampWidth * 0.58, opacity: visual.stampOpacity / 100 }]}
+                />
+              ) : null}
+              {p.signatureUrl ? (
+                <Image
+                  src={p.signatureUrl}
+                  style={[
+                    s.signImg,
+                    { width: visual.signatureWidth * 0.72, height: visual.signatureWidth * 0.34, opacity: visual.signatureOpacity / 100 },
+                  ]}
+                />
+              ) : null}
             </View>
             <Text style={s.bold}>{p.name || '( Nama Apoteker )'}</Text>
             <Text>No. SIPA: {p.sipa || '........................'}</Text>
