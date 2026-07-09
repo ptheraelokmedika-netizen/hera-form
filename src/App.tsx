@@ -56,6 +56,14 @@ const navItems: Array<{ key: Page; label: string; Icon: typeof FilePlus2 }> = [
   { key: 'designs', label: 'Pilihan Desain Surat', Icon: FileCheck2 },
 ]
 
+const pageMeta: Record<Page, { title: string; subtitle: string }> = {
+  create: { title: 'Buat Surat', subtitle: 'Buat dan finalisasi surat pemesanan produk klinik.' },
+  history: { title: 'History', subtitle: 'Kelola arsip finalized, draft, dan void surat pemesanan.' },
+  distributors: { title: 'Distributor', subtitle: 'Master data distributor untuk mempercepat pembuatan surat.' },
+  settings: { title: 'Settings', subtitle: 'Atur identitas klinik, apoteker, backup, dan ukuran tanda tangan.' },
+  designs: { title: 'Pilihan Desain Surat', subtitle: 'Pilih desain surat yang paling sesuai dengan kebutuhan klinik Anda.' },
+}
+
 const readImage = (file: File, done: (value: string) => void) => {
   const reader = new FileReader()
   reader.onload = () => done(String(reader.result || ''))
@@ -96,15 +104,6 @@ function App() {
   const [selectedDesign, setSelectedDesign] = useState(initialStore.selectedDesign || '')
 
   const activeDistributors = distributors.filter((item) => !item.isDeleted)
-  const stats = useMemo(
-    () => ({
-      finalized: orders.filter((order) => order.status === 'finalized').length,
-      void: orders.filter((order) => order.status === 'void').length,
-      distributors: activeDistributors.length,
-    }),
-    [orders, activeDistributors.length],
-  )
-
   const flash = (message: string) => {
     setNotice(message)
     window.setTimeout(() => setNotice(''), 2400)
@@ -208,10 +207,10 @@ function App() {
       {notice ? <div className="toast">{notice}</div> : null}
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-icon">H</div>
+          <div className="brand-icon">HF</div>
           <div>
-            <strong>Hera Form</strong>
-            <span>Surat Pemesanan Produk</span>
+            <strong>HERA FORM</strong>
+            <span>Order Management</span>
           </div>
         </div>
         <nav>
@@ -232,26 +231,32 @@ function App() {
           ))}
         </nav>
         <div className="audit-card">
-          <small>Audit Status</small>
-          <p>
-            Finalized <b>{stats.finalized}</b>
-          </p>
-          <p>
-            Void <b>{stats.void}</b>
-          </p>
-          <p>
-            Distributor <b>{stats.distributors}</b>
-          </p>
+          <div className="audit-icon">H</div>
+          <div>
+            <b>Hera Form</b>
+            <span>Klinik Profesional</span>
+          </div>
+          <small>v1.0.0</small>
         </div>
       </aside>
 
       <main className="main">
         <header className="topbar">
           <div>
-            <small>Premium Clinic Admin</small>
-            <h1>Surat Pemesanan Produk Klinik</h1>
+            <h1>{pageMeta[page].title}</h1>
+            <p>{pageMeta[page].subtitle}</p>
           </div>
-          <span className="badge good">Immutable finalized snapshot</span>
+          {page === 'designs' ? (
+            <div className="top-info-card">
+              <span>i</span>
+              <p>
+                <b>Desain yang dipilih belum diterapkan ke PDF.</b>
+                Hanya sebagai preview pilihan.
+              </p>
+            </div>
+          ) : (
+            <span className="badge good">Immutable finalized snapshot</span>
+          )}
         </header>
 
         {page === 'create' && !preview ? (
@@ -1092,22 +1097,18 @@ const designOptions = [
 function DesignOptionsPage({ selectedDesign, onSelect }: { selectedDesign: string; onSelect: (id: string) => void }) {
   return (
     <div className="stack">
-      <div className="page-title">
-        <div>
-          <small>Mockup Only</small>
-          <h2>Pilihan Desain Surat</h2>
-          <p>Preview ini memakai data contoh dan belum mengubah PDF asli atau data order.</p>
-        </div>
-      </div>
       <section className="design-grid">
-        {designOptions.map((option) => (
+        {designOptions.map((option, index) => (
           <article className="design-card" key={option.id}>
             <div className="design-card-head">
               <div>
-                <h3>{option.name}</h3>
+                <div className="design-title-row">
+                  <span>Opsi {index + 1}</span>
+                  <h3>{option.name}</h3>
+                </div>
                 <p>{option.desc}</p>
               </div>
-              {selectedDesign === option.id ? <span className="badge good">Selected</span> : null}
+              {selectedDesign === option.id ? <span className="selected-pill">Dipilih</span> : null}
             </div>
             <LetterMockup variant={option.id} />
             <button type="button" className="primary" onClick={() => onSelect(option.id)}>
