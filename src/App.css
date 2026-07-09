@@ -564,17 +564,145 @@ button.secondary.strong {
 }
 
 .stamp-preview {
-  width: 150px;
-  height: 120px;
-  left: 118px;
-  top: -4px;
+  height: auto;
+  left: 44%;
+  top: 2%;
 }
 
 .signature-preview {
-  width: 210px;
-  height: 92px;
-  left: 10px;
-  top: 28px;
+  height: auto;
+  left: 3%;
+  top: 33%;
+}
+
+.freeform-editor {
+  margin: 14px 0;
+}
+
+.freeform-area {
+  position: relative;
+  height: 180px;
+  overflow: hidden;
+  border: 1px solid rgba(24, 53, 46, 0.12);
+  border-radius: 12px;
+  background:
+    linear-gradient(90deg, rgba(183, 154, 82, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(183, 154, 82, 0.08) 1px, transparent 1px),
+    #fffdf8;
+  background-size: 24px 24px;
+}
+
+.freeform-item {
+  position: absolute;
+  height: 42px;
+  min-width: 70px;
+  touch-action: none;
+  user-select: none;
+  cursor: move;
+}
+
+.freeform-item span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(24, 53, 46, 0.24);
+  color: var(--emerald);
+  background: rgba(255, 253, 247, 0.68);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.stamp-item {
+  height: 86px;
+}
+
+.stamp-item span {
+  border-radius: 999px;
+  color: #8b6c2f;
+  border-color: rgba(183, 154, 82, 0.65);
+}
+
+.signature-item span {
+  border: 0;
+  border-bottom: 3px solid rgba(8, 38, 31, 0.7);
+  background: transparent;
+  transform: rotate(-4deg);
+}
+
+.freeform-item i {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fffdf8;
+  border-radius: 999px;
+  background: var(--gold);
+  box-shadow: 0 3px 10px rgba(41, 34, 20, 0.18);
+  cursor: nwse-resize;
+}
+
+.actual-letter {
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.design-premium-editorial {
+  background:
+    linear-gradient(135deg, transparent 0 82%, rgba(183, 154, 82, 0.18) 82% 88%, transparent 88%),
+    #fffdf8;
+}
+
+.design-premium-editorial header {
+  justify-content: center;
+  text-align: center;
+}
+
+.design-apothecary-professional .meta,
+.design-apothecary-professional .recipient {
+  padding: 12px;
+  border: 1px solid rgba(24, 53, 46, 0.1);
+  border-radius: 10px;
+  background: rgba(247, 241, 228, 0.8);
+}
+
+.design-apothecary-professional .pdf-table > div:first-child {
+  background: #dfe9df;
+}
+
+.design-minimal-legal-letter {
+  background: #fff;
+  color: #202421;
+}
+
+.design-minimal-legal-letter header,
+.design-minimal-legal-letter .pdf-table,
+.design-minimal-legal-letter .pdf-table span,
+.design-minimal-legal-letter .pdf-table b {
+  border-color: #d4d7d5;
+}
+
+.design-modern-clinic-admin {
+  background:
+    linear-gradient(90deg, transparent 0 88%, rgba(183, 154, 82, 0.08) 88%),
+    #fffdf8;
+}
+
+.design-modern-clinic-admin .meta {
+  width: min(310px, 100%);
+  margin-left: auto;
+  padding: 10px;
+  border: 1px solid rgba(183, 154, 82, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 253, 247, 0.86);
+}
+
+.design-modern-clinic-admin .paper-title {
+  display: inline-block;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: #f4ead1;
+  text-decoration: none;
 }
 
 .search {
@@ -842,19 +970,19 @@ button.secondary.strong {
   background: #f7f1e4;
 }
 
-.minimal-legal {
+.minimal-legal-letter {
   background: #fff;
   color: #202421;
 }
 
-.minimal-legal .mock-mark {
+.minimal-legal-letter .mock-mark {
   background: #202421;
 }
 
-.minimal-legal header,
-.minimal-legal .mock-table,
-.minimal-legal .mock-table span,
-.minimal-legal .mock-table b {
+.minimal-legal-letter header,
+.minimal-legal-letter .mock-table,
+.minimal-legal-letter .mock-table span,
+.minimal-legal-letter .mock-table b {
   border-color: #d9d9d9;
 }
 
@@ -1294,7 +1422,133 @@ button.secondary.strong {
 
 .paper {
   max-width: 820px;
-  padding: 32px 36px;
+  padding: 34px 38px;
+  font-size: 13px;
+  line-height: 1.42;
+}
+
+.paper header {
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom-width: 1px;
+}
+
+.paper header h2 {
+  color: #173d36;
+  font-size: 22px;
+  line-height: 1.14;
+  letter-spacing: 0.1px;
+}
+
+.paper header p,
+.paper p {
+  color: #34443f;
+  line-height: 1.38;
+}
+
+.paper-logo {
+  flex-basis: 58px;
+  width: 58px;
+  height: 56px;
+}
+
+.paper-title {
+  margin: 13px 0 6px;
+  color: #173d36;
+  font-size: 17px;
+  line-height: 1.18;
+  letter-spacing: 0.2px;
+  text-underline-offset: 4px;
+}
+
+.actual-letter::before {
+  content: 'DRAFT';
+  display: block;
+  width: fit-content;
+  margin: -2px auto 8px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: #6f5728;
+  background: #f4ead1;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.actual-letter.status-finalized::before {
+  content: 'FINAL';
+}
+
+.meta {
+  margin-bottom: 11px;
+  gap: 4px 10px;
+}
+
+.meta span {
+  color: #5f6d67;
+  font-weight: 700;
+}
+
+.meta b {
+  color: #24342f;
+  font-weight: 500;
+}
+
+.recipient {
+  margin-bottom: 10px;
+  line-height: 1.35;
+}
+
+.recipient b {
+  color: #173d36;
+  font-weight: 700;
+}
+
+.pdf-table {
+  margin: 8px 0 11px;
+  border-color: #d9cfba;
+}
+
+.pdf-table > div:first-child {
+  background: #f7f1e4;
+}
+
+.pdf-table span,
+.pdf-table b {
+  padding: 5px 6px;
+  border-color: #eee7d9;
+  font-size: 12px;
+  line-height: 1.28;
+}
+
+.pdf-table b {
+  color: #24342f;
+  font-weight: 700;
+}
+
+.signature {
+  margin-top: 9px;
+}
+
+.signature > div {
+  width: 290px;
+}
+
+.signature p {
+  margin: 0 0 2px;
+  line-height: 1.28;
+}
+
+.sign-box {
+  height: 108px;
+  margin: -1px 0 -8px;
+}
+
+.signature b {
+  display: block;
+  color: #1f302b;
+  font-size: 13.5px;
+  line-height: 1.22;
+  font-weight: 700;
 }
 
 .design-grid {
@@ -1402,7 +1656,7 @@ button.secondary.strong {
   background: #dfe9df;
 }
 
-.minimal-legal .mock-title {
+.minimal-legal-letter .mock-title {
   color: #1e2421;
 }
 

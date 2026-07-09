@@ -1,4 +1,4 @@
-import type { ClinicSettings, Distributor, DraftOrder, HeraStorage, Order, OrderItem, SignatureVisualSettings } from '../types/hera'
+import type { ClinicSettings, Distributor, DraftOrder, HeraStorage, Order, OrderItem, SignatureAssetLayout, SignatureVisualSettings } from '../types/hera'
 
 export const STORAGE_KEY = 'hera-form-storage-v1'
 const CORRUPT_BACKUP_KEY = 'hera-form-storage-corrupt-backup'
@@ -27,6 +27,22 @@ export const defaultVisualSettings = (): SignatureVisualSettings => ({
   signatureOpacity: 100,
 })
 
+export const defaultStampLayout = (): SignatureAssetLayout => ({
+  x: 44,
+  y: 2,
+  width: 180,
+  opacity: 100,
+  zIndex: 1,
+})
+
+export const defaultSignatureLayout = (): SignatureAssetLayout => ({
+  x: 3,
+  y: 33,
+  width: 250,
+  opacity: 100,
+  zIndex: 2,
+})
+
 export const normalizeVisualSettings = (value?: Partial<SignatureVisualSettings> | null): SignatureVisualSettings => {
   const defaults = defaultVisualSettings()
   return {
@@ -42,6 +58,17 @@ const clampNumber = (value: unknown, min: number, max: number, fallback: number)
   if (!Number.isFinite(number)) return fallback
   return Math.min(max, Math.max(min, Math.round(number)))
 }
+
+export const normalizeAssetLayout = (
+  value: Partial<SignatureAssetLayout> | null | undefined,
+  fallback: SignatureAssetLayout,
+): SignatureAssetLayout => ({
+  x: clampNumber(value?.x, -35, 120, fallback.x),
+  y: clampNumber(value?.y, -35, 120, fallback.y),
+  width: clampNumber(value?.width, 60, 420, fallback.width),
+  opacity: clampNumber(value?.opacity, 20, 100, fallback.opacity),
+  zIndex: clampNumber(value?.zIndex, 0, 5, fallback.zIndex),
+})
 
 export const defaultSettings = (): ClinicSettings => ({
   companyName: 'PT HERA ELOK MEDIKA',
@@ -67,11 +94,14 @@ export const emptyItem = (): OrderItem => ({
   notes: '',
 })
 
-export const emptyDraft = (settings?: ClinicSettings): DraftOrder => ({
+export const emptyDraft = (settings?: ClinicSettings, selectedDesign = 'official-compact'): DraftOrder => ({
   id: uid('draft'),
   orderDate: today(),
   distributorId: '',
   distributorSnapshot: { name: '', address: '', contactNumber: '', email: '', notes: '' },
+  selectedDesign,
+  stampLayout: defaultStampLayout(),
+  signatureLayout: defaultSignatureLayout(),
   visualSettings: normalizeVisualSettings(settings),
   items: [emptyItem()],
   createdAt: now(),
@@ -107,6 +137,17 @@ const normalizeDraft = (value: Partial<DraftOrder> | null | undefined, settings:
       email: value.distributorSnapshot?.email || '',
       notes: value.distributorSnapshot?.notes || '',
     },
+    selectedDesign: value.selectedDesign || 'official-compact',
+    stampLayout: normalizeAssetLayout(value.stampLayout, {
+      ...defaultStampLayout(),
+      width: normalizeVisualSettings(value.visualSettings || settings).stampWidth,
+      opacity: normalizeVisualSettings(value.visualSettings || settings).stampOpacity,
+    }),
+    signatureLayout: normalizeAssetLayout(value.signatureLayout, {
+      ...defaultSignatureLayout(),
+      width: normalizeVisualSettings(value.visualSettings || settings).signatureWidth,
+      opacity: normalizeVisualSettings(value.visualSettings || settings).signatureOpacity,
+    }),
     visualSettings: normalizeVisualSettings(value.visualSettings || settings),
     items: Array.isArray(value.items) && value.items.length ? value.items.map((item) => ({ ...emptyItem(), ...item })) : [emptyItem()],
     createdAt: value.createdAt || now(),
@@ -135,6 +176,17 @@ const normalizeOrder = (value: Partial<Order>, settings: ClinicSettings): Order 
       signatureUrl: value.pharmacistSnapshot?.signatureUrl || '',
       stampUrl: value.pharmacistSnapshot?.stampUrl || '',
     },
+    selectedDesign: value.selectedDesign || 'official-compact',
+    stampLayout: normalizeAssetLayout(value.stampLayout, {
+      ...defaultStampLayout(),
+      width: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings).stampWidth,
+      opacity: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings).stampOpacity,
+    }),
+    signatureLayout: normalizeAssetLayout(value.signatureLayout, {
+      ...defaultSignatureLayout(),
+      width: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings).signatureWidth,
+      opacity: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings).signatureOpacity,
+    }),
     visualSettings: normalizeVisualSettings(value.visualSettings || value.clinicSnapshot || settings),
     items: value.items.map((item) => ({ ...emptyItem(), ...item })),
     status: value.status || 'finalized',
@@ -282,6 +334,9 @@ export const finalizeOrder = (draft: DraftOrder, settings: ClinicSettings) => {
       signatureUrl: settings.signatureUrl,
       stampUrl: settings.stampUrl,
     },
+    selectedDesign: draft.selectedDesign || store.selectedDesign || 'official-compact',
+    stampLayout: normalizeAssetLayout(draft.stampLayout, defaultStampLayout()),
+    signatureLayout: normalizeAssetLayout(draft.signatureLayout, defaultSignatureLayout()),
     visualSettings: normalizeVisualSettings(draft.visualSettings),
     items: draft.items.filter((item) => item.productName.trim() && item.quantity.trim()).map((item) => ({ ...item })),
     status: 'finalized',

@@ -22,7 +22,8 @@ import {
   Trash2,
 } from 'lucide-react'
 import { createElement, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useRef } from 'react'
+import type { PointerEvent, ReactNode } from 'react'
 import './App.css'
 import { OrderPdf } from './pdf/OrderPdf'
 import {
@@ -96,12 +97,14 @@ function App() {
   const [settings, setSettings] = useState<ClinicSettings>(initialStore.settings)
   const [distributors, setDistributors] = useState<Distributor[]>(initialStore.distributors)
   const [orders, setOrders] = useState<Order[]>(initialStore.orders)
-  const [draft, setDraft] = useState<DraftOrder>(initialStore.currentDraft || emptyDraft(initialStore.settings))
+  const [draft, setDraft] = useState<DraftOrder>(initialStore.currentDraft || emptyDraft(initialStore.settings, initialStore.selectedDesign || 'official-compact'))
   const [preview, setPreview] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [notice, setNotice] = useState('')
   const [draftSavedAt, setDraftSavedAt] = useState(draft.updatedAt)
-  const [selectedDesign, setSelectedDesign] = useState(initialStore.selectedDesign || '')
+  const [selectedDesign, setSelectedDesign] = useState(initialStore.selectedDesign || 'official-compact')
+  const draftSaveTimer = useRef<number | null>(null)
+  const finalizingRef = useRef(false)
 
   const activeDistributors = distributors.filter((item) => !item.isDeleted)
   const flash = (message: string) => {
@@ -110,6 +113,7 @@ function App() {
   }
 
   const persistDraft = (nextDraft: DraftOrder | null, message?: string) => {
+    if (finalizingRef.current && nextDraft) return
     saveCurrentDraft(nextDraft)
     if (nextDraft) setDraftSavedAt(nextDraft.updatedAt)
     if (message) flash(message)
@@ -118,7 +122,8 @@ function App() {
   const patchDraft = (patch: Partial<DraftOrder>) => {
     const nextDraft = { ...draft, ...patch, updatedAt: now() }
     setDraft(nextDraft)
-    window.setTimeout(() => persistDraft(nextDraft), 450)
+    if (draftSaveTimer.current) window.clearTimeout(draftSaveTimer.current)
+    draftSaveTimer.current = window.setTimeout(() => persistDraft(nextDraft), 450)
   }
 
   const makePreviewOrder = (): Order => ({
@@ -135,6 +140,9 @@ function App() {
       stampUrl: settings.stampUrl,
     },
     visualSettings: normalizeVisualSettings(draft.visualSettings),
+    selectedDesign: draft.selectedDesign || selectedDesign || 'official-compact',
+    stampLayout: draft.stampLayout,
+    signatureLayout: draft.signatureLayout,
     items: draft.items.filter((item) => item.productName.trim() || item.quantity.trim()),
     status: 'draft',
     createdAt: draft.createdAt,
@@ -148,15 +156,31 @@ function App() {
     const error = validateDraft(draft)
     if (error) return alert(error)
     if (!confirm('Finalisasi order? Setelah final, data akan terkunci dan tidak bisa diedit diam-diam.')) return
-    const order = finalizeOrder(draft, settings)
-    setOrders([order, ...orders])
-    setDistributors(loadStore().distributors)
-    setDraft(emptyDraft(settings))
-    persistDraft(null)
-    setPreview(false)
-    setPage('history')
-    flash(`Order ${order.orderNumber} finalized.`)
-    await downloadPdf(order)
+    finalizingRef.current = true
+    if (draftSaveTimer.current) window.clearTimeout(draftSaveTimer.current)
+    try {
+      const order = finalizeOrder({ ...draft, selectedDesign: draft.selectedDesign || selectedDesign || 'official-compact' }, settings)
+      const store = loadStore()
+      setOrders(store.orders)
+      setDistributors(store.distributors)
+      setDraft(emptyDraft(settings, selectedDesign || 'official-compact'))
+      saveCurrentDraft(null)
+      setDraftSavedAt(now())
+      setPreview(false)
+      setSelectedOrder(order)
+      setPage('history')
+      flash('Order berhasil difinalisasi. PDF final sedang dibuat.')
+      try {
+        await downloadPdf(order)
+      } catch {
+        flash('Order sudah finalized. Klik Download PDF Final jika file belum otomatis terunduh.')
+      }
+    } catch (err) {
+      finalizingRef.current = false
+      flash(`Gagal finalisasi: ${err instanceof Error ? err.message : 'unknown error'}`)
+      return
+    }
+    finalizingRef.current = false
   }
 
   const duplicateOrder = (order: Order) => {
@@ -165,6 +189,9 @@ function App() {
       orderDate: new Date().toISOString().slice(0, 10),
       distributorId: order.distributorId,
       distributorSnapshot: { ...order.distributorSnapshot },
+      selectedDesign: order.selectedDesign || selectedDesign || 'official-compact',
+      stampLayout: order.stampLayout,
+      signatureLayout: order.signatureLayout,
       visualSettings: normalizeVisualSettings(order.visualSettings),
       items: order.items.map((item) => ({ ...item, id: uid('item') })),
       createdAt: now(),
@@ -291,7 +318,7 @@ function App() {
                   className="danger-btn"
                   onClick={() => {
                     if (!confirm('Buang draft saat ini?')) return
-                    const nextDraft = emptyDraft(settings)
+                    const nextDraft = emptyDraft(settings, selectedDesign || 'official-compact')
                     setDraft(nextDraft)
                     persistDraft(null, 'Draft dibuang.')
                   }}
@@ -429,9 +456,9 @@ function App() {
 
             <SignatureControls
               title="Pengaturan TTD & Stempel Surat Ini"
-              value={draft.visualSettings}
+              value={draft}
               defaults={settings}
-              onChange={(visualSettings) => patchDraft({ visualSettings })}
+              onChange={(patch) => patchDraft(patch)}
             />
 
             <div className="actions">
@@ -487,8 +514,8 @@ function App() {
               setSettings(store.settings)
               setDistributors(store.distributors)
               setOrders(store.orders)
-              setDraft(store.currentDraft || emptyDraft(store.settings))
-              setSelectedDesign(store.selectedDesign || '')
+              setDraft(store.currentDraft || emptyDraft(store.settings, store.selectedDesign || 'official-compact'))
+              setSelectedDesign(store.selectedDesign || 'official-compact')
             }}
             flash={flash}
           />
@@ -499,7 +526,8 @@ function App() {
             onSelect={(id) => {
               setSelectedDesign(id)
               saveSelectedDesign(id)
-              flash('Pilihan desain disimpan sementara. Belum diterapkan ke PDF asli.')
+              patchDraft({ selectedDesign: id })
+              flash('Desain dipilih dan diterapkan ke preview/PDF draft.')
             }}
           />
         ) : null}
@@ -554,13 +582,41 @@ function SignatureControls({
   onChange,
 }: {
   title: string
-  value: SignatureVisualSettings
+  value: Pick<DraftOrder, 'visualSettings' | 'stampLayout' | 'signatureLayout'>
   defaults: Partial<SignatureVisualSettings>
-  onChange: (value: SignatureVisualSettings) => void
+  onChange: (value: Partial<DraftOrder>) => void
 }) {
-  const visual = normalizeVisualSettings(value)
-  const patch = (patchValue: Partial<SignatureVisualSettings>) => onChange(normalizeVisualSettings({ ...visual, ...patchValue }))
-  const preset = (stampWidth: number, signatureWidth: number) => patch({ stampWidth, signatureWidth })
+  const visual = normalizeVisualSettings(value.visualSettings)
+  const stampLayout = value.stampLayout
+  const signatureLayout = value.signatureLayout
+  const patchVisual = (patchValue: Partial<SignatureVisualSettings>) => {
+    const nextVisual = normalizeVisualSettings({ ...visual, ...patchValue })
+    onChange({
+      visualSettings: nextVisual,
+      stampLayout: { ...stampLayout, width: nextVisual.stampWidth, opacity: nextVisual.stampOpacity },
+      signatureLayout: { ...signatureLayout, width: nextVisual.signatureWidth, opacity: nextVisual.signatureOpacity },
+    })
+  }
+  const patchStamp = (patchValue: Partial<typeof stampLayout>) =>
+    onChange({
+      stampLayout: { ...stampLayout, ...patchValue },
+      visualSettings: normalizeVisualSettings({ ...visual, stampWidth: patchValue.width ?? stampLayout.width, stampOpacity: patchValue.opacity ?? stampLayout.opacity }),
+    })
+  const patchSignature = (patchValue: Partial<typeof signatureLayout>) =>
+    onChange({
+      signatureLayout: { ...signatureLayout, ...patchValue },
+      visualSettings: normalizeVisualSettings({
+        ...visual,
+        signatureWidth: patchValue.width ?? signatureLayout.width,
+        signatureOpacity: patchValue.opacity ?? signatureLayout.opacity,
+      }),
+    })
+  const preset = (stampWidth: number, signatureWidth: number) =>
+    onChange({
+      visualSettings: normalizeVisualSettings({ ...visual, stampWidth, signatureWidth }),
+      stampLayout: { ...stampLayout, width: stampWidth },
+      signatureLayout: { ...signatureLayout, width: signatureWidth },
+    })
   return (
     <section className="panel">
       <Title icon={<PenLine size={18} />} title={title} text="Ukuran ini ikut tersimpan di draft dan snapshot order finalized." />
@@ -574,37 +630,125 @@ function SignatureControls({
         <button type="button" className="secondary" onClick={() => preset(210, 280)}>
           Besar
         </button>
-        <button type="button" className="secondary" onClick={() => onChange(normalizeVisualSettings(defaults))}>
+        <button type="button" className="secondary" onClick={() => patchVisual(normalizeVisualSettings(defaults))}>
           Reset ke Default
         </button>
+        <button type="button" className="secondary strong">
+          Freeform Edit
+        </button>
       </div>
+      <SignatureFreeformEditor
+        stampLayout={stampLayout}
+        signatureLayout={signatureLayout}
+        onStampChange={patchStamp}
+        onSignatureChange={patchSignature}
+      />
       <div className="grid two">
-        <NumberSlider label="Ukuran Stempel" value={visual.stampWidth} min={80} max={260} onChange={(stampWidth) => patch({ stampWidth })} />
-        <NumberSlider
-          label="Ukuran Tanda Tangan"
-          value={visual.signatureWidth}
-          min={100}
-          max={320}
-          onChange={(signatureWidth) => patch({ signatureWidth })}
-        />
+        <NumberSlider label="Posisi X Stempel" value={stampLayout.x} min={-35} max={120} suffix="%" onChange={(x) => patchStamp({ x })} />
+        <NumberSlider label="Posisi Y Stempel" value={stampLayout.y} min={-35} max={120} suffix="%" onChange={(y) => patchStamp({ y })} />
+        <NumberSlider label="Lebar Stempel" value={stampLayout.width} min={60} max={420} onChange={(width) => patchStamp({ width })} />
         <NumberSlider
           label="Transparansi Stempel"
-          value={visual.stampOpacity}
-          min={40}
+          value={stampLayout.opacity}
+          min={20}
           max={100}
           suffix="%"
-          onChange={(stampOpacity) => patch({ stampOpacity })}
+          onChange={(opacity) => patchStamp({ opacity })}
+        />
+        <NumberSlider label="Posisi X Tanda Tangan" value={signatureLayout.x} min={-35} max={120} suffix="%" onChange={(x) => patchSignature({ x })} />
+        <NumberSlider label="Posisi Y Tanda Tangan" value={signatureLayout.y} min={-35} max={120} suffix="%" onChange={(y) => patchSignature({ y })} />
+        <NumberSlider
+          label="Lebar Tanda Tangan"
+          value={signatureLayout.width}
+          min={60}
+          max={420}
+          onChange={(width) => patchSignature({ width })}
         />
         <NumberSlider
           label="Transparansi Tanda Tangan"
-          value={visual.signatureOpacity}
-          min={60}
+          value={signatureLayout.opacity}
+          min={20}
           max={100}
           suffix="%"
-          onChange={(signatureOpacity) => patch({ signatureOpacity })}
+          onChange={(opacity) => patchSignature({ opacity })}
         />
       </div>
     </section>
+  )
+}
+
+function SignatureFreeformEditor({
+  stampLayout,
+  signatureLayout,
+  onStampChange,
+  onSignatureChange,
+}: {
+  stampLayout: DraftOrder['stampLayout']
+  signatureLayout: DraftOrder['signatureLayout']
+  onStampChange: (value: Partial<DraftOrder['stampLayout']>) => void
+  onSignatureChange: (value: Partial<DraftOrder['signatureLayout']>) => void
+}) {
+  const startDrag = (
+    event: PointerEvent<HTMLElement>,
+    layout: DraftOrder['stampLayout'],
+    onChange: (value: Partial<DraftOrder['stampLayout']>) => void,
+    mode: 'move' | 'resize',
+  ) => {
+    const area = event.currentTarget.closest('.freeform-area') as HTMLDivElement | null
+    if (!area) return
+    const rect = area.getBoundingClientRect()
+    const startX = event.clientX
+    const startY = event.clientY
+    const start = { ...layout }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const move = (moveEvent: globalThis.PointerEvent) => {
+      const dx = moveEvent.clientX - startX
+      const dy = moveEvent.clientY - startY
+      if (mode === 'resize') {
+        onChange({ width: Math.max(60, start.width + dx) })
+      } else {
+        onChange({
+          x: Math.round(start.x + (dx / rect.width) * 100),
+          y: Math.round(start.y + (dy / rect.height) * 100),
+        })
+      }
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  return (
+    <div className="freeform-editor">
+      <div className="freeform-area">
+        <div
+          className="freeform-item stamp-item"
+          style={{ left: `${stampLayout.x}%`, top: `${stampLayout.y}%`, width: stampLayout.width, opacity: stampLayout.opacity / 100, zIndex: stampLayout.zIndex }}
+          onPointerDown={(event) => startDrag(event, stampLayout, onStampChange, 'move')}
+        >
+          <span>Stempel</span>
+          <i onPointerDown={(event) => { event.stopPropagation(); startDrag(event, stampLayout, onStampChange, 'resize') }} />
+        </div>
+        <div
+          className="freeform-item signature-item"
+          style={{
+            left: `${signatureLayout.x}%`,
+            top: `${signatureLayout.y}%`,
+            width: signatureLayout.width,
+            opacity: signatureLayout.opacity / 100,
+            zIndex: signatureLayout.zIndex,
+          }}
+          onPointerDown={(event) => startDrag(event, signatureLayout, onSignatureChange, 'move')}
+        >
+          <span>Tanda tangan</span>
+          <i onPointerDown={(event) => { event.stopPropagation(); startDrag(event, signatureLayout, onSignatureChange, 'resize') }} />
+        </div>
+      </div>
+      <p className="helper-note">Edit Posisi & Ukuran TTD / Stempel: geser elemen, atau tarik titik pojok untuk resize.</p>
+    </div>
   )
 }
 
@@ -620,12 +764,17 @@ function Preview({
   onPdf: () => void
 }) {
   const visual = normalizeVisualSettings(order.visualSettings)
+  const design = order.selectedDesign || 'official-compact'
+  const stampLayout = order.stampLayout
+  const signatureLayout = order.signatureLayout
   return (
     <div className="stack">
       <div className="preview-actions">
-        <button className="secondary" type="button" onClick={onBack}>
-          Back / Edit Draft
-        </button>
+        {onBack ? (
+          <button className="secondary" type="button" onClick={onBack}>
+            Back / Edit Draft
+          </button>
+        ) : null}
         {onFinalize ? (
           <button className="primary" type="button" onClick={onFinalize}>
             <FileCheck2 size={17} /> Save / Finalize Order
@@ -635,7 +784,7 @@ function Preview({
           <Download size={17} /> Generate PDF
         </button>
       </div>
-      <article className="paper">
+      <article className={`paper actual-letter design-${design} status-${order.status === 'finalized' ? 'finalized' : 'draft'}`}>
         <header>
           <div className={order.clinicSnapshot.logoUrl ? 'paper-logo' : 'paper-logo empty'}>
             {order.clinicSnapshot.logoUrl ? <img src={order.clinicSnapshot.logoUrl} alt="Logo" /> : null}
@@ -696,7 +845,13 @@ function Preview({
                   className="stamp-preview"
                   src={order.pharmacistSnapshot.stampUrl}
                   alt="Stamp"
-                  style={{ width: visual.stampWidth, opacity: visual.stampOpacity / 100 }}
+                  style={{
+                    left: `${stampLayout.x}%`,
+                    top: `${stampLayout.y}%`,
+                    width: stampLayout.width || visual.stampWidth,
+                    opacity: (stampLayout.opacity || visual.stampOpacity) / 100,
+                    zIndex: stampLayout.zIndex,
+                  }}
                 />
               ) : null}
               {order.pharmacistSnapshot.signatureUrl ? (
@@ -704,7 +859,13 @@ function Preview({
                   className="signature-preview"
                   src={order.pharmacistSnapshot.signatureUrl}
                   alt="Signature"
-                  style={{ width: visual.signatureWidth, opacity: visual.signatureOpacity / 100 }}
+                  style={{
+                    left: `${signatureLayout.x}%`,
+                    top: `${signatureLayout.y}%`,
+                    width: signatureLayout.width || visual.signatureWidth,
+                    opacity: (signatureLayout.opacity || visual.signatureOpacity) / 100,
+                    zIndex: signatureLayout.zIndex,
+                  }}
                 />
               ) : null}
             </div>
@@ -744,7 +905,7 @@ function History({
             Back
           </button>
           <button className="secondary strong" type="button" onClick={() => downloadPdf(selected)}>
-            <Download size={17} /> Generate PDF again
+            <Download size={17} /> Download PDF Final
           </button>
           <button className="secondary" type="button" onClick={() => duplicate(selected)}>
             <CopyPlus size={17} /> Duplicate as new order
@@ -1058,9 +1219,14 @@ function SettingsPage({
       </section>
       <SignatureControls
         title="Default Ukuran TTD & Stempel"
-        value={normalizeVisualSettings(form)}
+        value={{
+          ...emptyDraft(form, 'official-compact'),
+          visualSettings: normalizeVisualSettings(form),
+        }}
         defaults={defaultSettings()}
-        onChange={(visualSettings) => patch(visualSettings)}
+        onChange={(draftPatch) => {
+          if (draftPatch.visualSettings) patch(draftPatch.visualSettings)
+        }}
       />
     </div>
   )
@@ -1090,7 +1256,7 @@ const designOptions = [
   { id: 'official-compact', name: 'Official Compact', desc: 'Surat klinik resmi, ringkas, dan cocok untuk distributor formal.' },
   { id: 'premium-editorial', name: 'Premium Editorial', desc: 'Stationery klinik premium dengan ritme visual lebih modern.' },
   { id: 'apothecary-professional', name: 'Apothecary Professional', desc: 'Struktur apoteker yang rapi dengan blok informasi tegas.' },
-  { id: 'minimal-legal', name: 'Minimal Legal Letter', desc: 'Paling matang, minimal, dan sangat formal.' },
+  { id: 'minimal-legal-letter', name: 'Minimal Legal Letter', desc: 'Paling matang, minimal, dan sangat formal.' },
   { id: 'modern-clinic-admin', name: 'Modern Clinic Admin', desc: 'Lebih fresh dan Gen Z, tetap printable dan resmi.' },
 ]
 
