@@ -25,9 +25,13 @@ import { createElement, useMemo, useState } from 'react'
 import { useRef } from 'react'
 import type { CSSProperties, PointerEvent, ReactNode } from 'react'
 import './App.css'
+import heraDefaultLogo from './assets/hera-default-mark.png'
+import heraDefaultStampSignature from './assets/hera-default-stamp-signature.png'
 import { assetBox, getDocumentDesign, normalizeDocumentAssetLayout } from './documentDesign'
 import { OrderPdf } from './pdf/OrderPdf'
 import {
+  BUILTIN_LOGO_REF,
+  BUILTIN_STAMP_SIGNATURE_REF,
   defaultSettings,
   deleteDistributor,
   emptyDraft,
@@ -100,16 +104,42 @@ const readImage = (file: File, kind: 'logoUrl' | 'signatureUrl' | 'stampUrl', do
 
 const isSettingsRef = (value: string | undefined, key: 'logoUrl' | 'signatureUrl' | 'stampUrl') => value === `settings.${key}`
 
+const resolveBuiltInAsset = (value = '') => {
+  if (value === BUILTIN_LOGO_REF) return heraDefaultLogo
+  if (value === BUILTIN_STAMP_SIGNATURE_REF) return heraDefaultStampSignature
+  return value
+}
+
+const downloadImageAsset = async (source: string, filename: string) => {
+  const resolvedSource = resolveBuiltInAsset(source)
+  if (!resolvedSource) return
+  let href = resolvedSource
+  let shouldRevoke = false
+  if (!resolvedSource.startsWith('data:image/')) {
+    const response = await fetch(resolvedSource)
+    if (!response.ok) throw new Error('Gagal mengambil file gambar.')
+    href = URL.createObjectURL(await response.blob())
+    shouldRevoke = true
+  }
+  const a = document.createElement('a')
+  a.href = href
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  if (shouldRevoke) URL.revokeObjectURL(href)
+}
+
 const resolveOrderAssets = (order: Order, settings: ClinicSettings): Order => ({
   ...order,
   clinicSnapshot: {
     ...order.clinicSnapshot,
-    logoUrl: isSettingsRef(order.clinicSnapshot.logoUrl, 'logoUrl') ? settings.logoUrl : order.clinicSnapshot.logoUrl,
+    logoUrl: resolveBuiltInAsset(isSettingsRef(order.clinicSnapshot.logoUrl, 'logoUrl') ? settings.logoUrl : order.clinicSnapshot.logoUrl),
   },
   pharmacistSnapshot: {
     ...order.pharmacistSnapshot,
-    signatureUrl: isSettingsRef(order.pharmacistSnapshot.signatureUrl, 'signatureUrl') ? settings.signatureUrl : order.pharmacistSnapshot.signatureUrl,
-    stampUrl: isSettingsRef(order.pharmacistSnapshot.stampUrl, 'stampUrl') ? settings.stampUrl : order.pharmacistSnapshot.stampUrl,
+    signatureUrl: resolveBuiltInAsset(isSettingsRef(order.pharmacistSnapshot.signatureUrl, 'signatureUrl') ? settings.signatureUrl : order.pharmacistSnapshot.signatureUrl),
+    stampUrl: resolveBuiltInAsset(isSettingsRef(order.pharmacistSnapshot.stampUrl, 'stampUrl') ? settings.stampUrl : order.pharmacistSnapshot.stampUrl),
   },
   stampLayout: normalizeDocumentAssetLayout(order.stampLayout, 'stamp', order.selectedDesign),
   signatureLayout: normalizeDocumentAssetLayout(order.signatureLayout, 'signature', order.selectedDesign),
@@ -1236,6 +1266,8 @@ function SettingsPage({
   const [form, setForm] = useState(settings || defaultSettings())
   const [usage, setUsage] = useState(getStorageUsage())
   const patch = (patchValue: Partial<ClinicSettings>) => setForm({ ...form, ...patchValue })
+  const heraDefaults = defaultSettings()
+  const isDefaultValue = (key: keyof ClinicSettings) => form[key] === heraDefaults[key]
   const formatBytes = (bytes = 0) => {
     if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -1272,9 +1304,12 @@ function SettingsPage({
   }
   const imageField = (label: string, key: 'logoUrl' | 'signatureUrl' | 'stampUrl') => (
     <div className="image-field">
-      <div className="image-preview">{form[key] ? <img src={form[key]} alt={label} /> : <ImagePlus size={22} />}</div>
+      <div className="image-preview">{form[key] ? <img src={resolveBuiltInAsset(form[key])} alt={label} /> : <ImagePlus size={22} />}</div>
       <label>
-        {label}
+        <span>
+          {label}
+          {isDefaultValue(key) ? <b className="mini-default-badge">Default Hera</b> : null}
+        </span>
         <input
           type="file"
           accept="image/*"
@@ -1285,8 +1320,39 @@ function SettingsPage({
         />
       </label>
       {form.imageSizes?.[key] ? <small>{formatBytes(form.imageSizes[key])}</small> : null}
+      <button
+        type="button"
+        className="secondary asset-download"
+        disabled={!form[key]}
+        onClick={async () => {
+          try {
+            await downloadImageAsset(
+              form[key],
+              {
+                logoUrl: 'hera-logo.png',
+                signatureUrl: 'hera-ttd-apoteker.png',
+                stampUrl: 'hera-stempel-klinik.png',
+              }[key],
+            )
+            flash('Gambar berhasil diunduh.')
+          } catch {
+            flash('Gagal download gambar. Coba simpan ulang asset dari Settings.')
+          }
+        }}
+      >
+        {{ logoUrl: 'Download Logo', signatureUrl: 'Download TTD', stampUrl: 'Download Stempel' }[key]}
+      </button>
+      {!form[key] ? <small>Belum ada file</small> : null}
     </div>
   )
+  const resetToHeraDefaults = () => {
+    if (!confirm('Reset semua identitas klinik, apoteker, logo, stempel, dan tanda tangan ke Default Hera?')) return
+    const next = defaultSettings()
+    setForm(next)
+    const saved = saveSettings(next)
+    setSettings(saved)
+    flash('Settings kembali ke Default Hera.')
+  }
   return (
     <div className="stack">
       <div className="page-title">
@@ -1306,6 +1372,33 @@ function SettingsPage({
           <Save size={17} /> Simpan Settings
         </button>
       </div>
+      <section className="panel default-hera-panel">
+        <div>
+          <b>Default Hera tersedia</b>
+          <p>Data PT Hera, apoteker, logo, stempel, dan tanda tangan bawaan aktif otomatis untuk browser baru.</p>
+        </div>
+        <div className="preset-row">
+          <button type="button" className="secondary strong" onClick={resetToHeraDefaults}>
+            Reset ke Default Hera
+          </button>
+          <button type="button" className="secondary" onClick={() => patch({ logoUrl: BUILTIN_LOGO_REF, imageSizes: { ...(form.imageSizes || {}), logoUrl: undefined } })}>
+            Gunakan Logo Default Hera
+          </button>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() =>
+              patch({
+                signatureUrl: BUILTIN_STAMP_SIGNATURE_REF,
+                stampUrl: BUILTIN_STAMP_SIGNATURE_REF,
+                imageSizes: { ...(form.imageSizes || {}), signatureUrl: undefined, stampUrl: undefined },
+              })
+            }
+          >
+            Gunakan Stempel Default Hera
+          </button>
+        </div>
+      </section>
       <section className="panel info-panel">
         <b>Backup & keamanan data lokal</b>
         <p>Data saat ini disimpan di browser ini. Untuk keamanan sebelum update besar, klik Export Backup.</p>
@@ -1358,26 +1451,32 @@ function SettingsPage({
           <label>
             Company name
             <input value={form.companyName} onChange={(e) => patch({ companyName: e.target.value })} />
+            {isDefaultValue('companyName') ? <small>Default Hera</small> : null}
           </label>
           <label>
             Email pemesan
             <input value={form.email} onChange={(e) => patch({ email: e.target.value })} />
+            {isDefaultValue('email') ? <small>Default Hera</small> : null}
           </label>
           <label>
             NIB
             <input value={form.nib} onChange={(e) => patch({ nib: e.target.value })} />
+            {isDefaultValue('nib') ? <small>Default Hera</small> : null}
           </label>
           <label>
             Nomor izin klinik / izin operasional
             <input value={form.licenseNumber} onChange={(e) => patch({ licenseNumber: e.target.value })} />
+            {isDefaultValue('licenseNumber') ? <small>Default Hera</small> : null}
           </label>
           <label>
             Contact number
             <input value={form.contactNumber} onChange={(e) => patch({ contactNumber: e.target.value })} />
+            {isDefaultValue('contactNumber') ? <small>Default Hera</small> : null}
           </label>
           <label className="full">
             Address
             <textarea value={form.address} onChange={(e) => patch({ address: e.target.value })} />
+            {isDefaultValue('address') ? <small>Default Hera</small> : null}
           </label>
         </div>
       </section>
@@ -1387,15 +1486,35 @@ function SettingsPage({
           <label>
             Nama apoteker
             <input value={form.pharmacistName} onChange={(e) => patch({ pharmacistName: e.target.value })} />
+            {isDefaultValue('pharmacistName') ? <small>Default Hera</small> : null}
           </label>
           <label>
             No. SIPA
             <input value={form.pharmacistSipa} onChange={(e) => patch({ pharmacistSipa: e.target.value })} />
+            {isDefaultValue('pharmacistSipa') ? <small>Default Hera</small> : null}
           </label>
         </div>
         <div className="grid two">
           {imageField('Signature image upload', 'signatureUrl')}
           {imageField('Clinic stamp image upload', 'stampUrl')}
+        </div>
+        <div className="asset-recovery-row">
+          <p className="helper-note">Jika file asli terhapus, gunakan tombol download ini untuk menyimpan ulang gambar.</p>
+          <button
+            type="button"
+            className="secondary asset-download"
+            disabled={!form.signatureUrl && !form.stampUrl}
+            onClick={async () => {
+              try {
+                await downloadImageAsset(form.stampUrl || form.signatureUrl, 'hera-stempel-ttd.png')
+                flash('Stempel + TTD berhasil diunduh.')
+              } catch {
+                flash('Gagal download Stempel + TTD.')
+              }
+            }}
+          >
+            {form.signatureUrl || form.stampUrl ? 'Download Stempel + TTD' : 'Belum ada file'}
+          </button>
         </div>
       </section>
       <SignatureControls

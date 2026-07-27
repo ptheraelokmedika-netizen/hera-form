@@ -1,6 +1,8 @@
 import type { ClinicSettings, Distributor, DraftOrder, HeraStorage, Order, OrderItem, SignatureAssetLayout, SignatureVisualSettings } from '../types/hera'
 
 export const STORAGE_KEY = 'hera-form-storage-v1'
+export const BUILTIN_LOGO_REF = 'builtin:hera-default-logo'
+export const BUILTIN_STAMP_SIGNATURE_REF = 'builtin:hera-default-stamp-signature'
 const CORRUPT_BACKUP_KEY = 'hera-form-storage-corrupt-backup'
 const PRE_OPTIMIZE_BACKUP_KEY = 'hera-form-storage-pre-optimize-backup'
 const BEFORE_QUOTA_MIGRATION_KEY = 'hera-form-storage-before-quota-migration'
@@ -24,24 +26,26 @@ export const uid = (prefix: string) => `${prefix}_${Date.now().toString(36)}_${M
 export const today = () => new Date().toISOString().slice(0, 10)
 
 export const defaultVisualSettings = (): SignatureVisualSettings => ({
-  stampWidth: 160,
-  signatureWidth: 220,
-  stampOpacity: 100,
+  stampWidth: 190,
+  signatureWidth: 240,
+  stampOpacity: 90,
   signatureOpacity: 100,
 })
 
 export const defaultStampLayout = (): SignatureAssetLayout => ({
-  x: 27,
-  y: 24,
-  width: 170,
-  opacity: 100,
+  x: 42,
+  y: 18,
+  width: 30,
+  widthUnit: 'percent',
+  opacity: 90,
   zIndex: 1,
 })
 
 export const defaultSignatureLayout = (): SignatureAssetLayout => ({
-  x: 43,
-  y: 32,
-  width: 230,
+  x: 47,
+  y: 38,
+  width: 34,
+  widthUnit: 'percent',
   opacity: 100,
   zIndex: 2,
 })
@@ -109,16 +113,16 @@ export const normalizeAssetLayout = (
 
 export const defaultSettings = (): ClinicSettings => ({
   companyName: 'PT HERA ELOK MEDIKA',
-  logoUrl: '',
-  nib: '',
-  licenseNumber: '',
-  address: '',
-  contactNumber: '',
+  logoUrl: BUILTIN_LOGO_REF,
+  nib: '2808230057848',
+  licenseNumber: '28082300578480001',
+  address: 'Komplek Riau Business Centre Blok D 19, Pekanbaru, Riau',
+  contactNumber: '081362451992',
   email: 'ptheraelokmedika@gmail.com',
-  pharmacistName: '',
-  pharmacistSipa: '',
-  signatureUrl: '',
-  stampUrl: '',
+  pharmacistName: 'apt. Deddy Hasan Putra Sianturi, S. Farm',
+  pharmacistSipa: 'No. 122/05.15/DPMPTSP/V/2024',
+  signatureUrl: BUILTIN_STAMP_SIGNATURE_REF,
+  stampUrl: BUILTIN_STAMP_SIGNATURE_REF,
   ...defaultVisualSettings(),
   updatedAt: now(),
 })
@@ -154,13 +158,25 @@ const safeParse = <T,>(raw: string | null): T | null => {
   }
 }
 
-const normalizeSettings = (value?: Partial<ClinicSettings> | null): ClinicSettings => ({
-  ...defaultSettings(),
-  ...(value || {}),
-  ...normalizeVisualSettings(value),
-  imageSizes: value?.imageSizes || {},
-  updatedAt: typeof value?.updatedAt === 'string' ? value.updatedAt : now(),
-})
+const withMissingDefaults = (value?: Partial<ClinicSettings> | null): Partial<ClinicSettings> => {
+  const defaults = defaultSettings()
+  const next = { ...(value || {}) }
+  ;(['companyName', 'logoUrl', 'nib', 'licenseNumber', 'address', 'contactNumber', 'email', 'pharmacistName', 'pharmacistSipa', 'signatureUrl', 'stampUrl'] as const).forEach((key) => {
+    if (typeof next[key] !== 'string' || !next[key]?.trim()) next[key] = defaults[key]
+  })
+  return next
+}
+
+const normalizeSettings = (value?: Partial<ClinicSettings> | null): ClinicSettings => {
+  const filled = withMissingDefaults(value)
+  return {
+    ...defaultSettings(),
+    ...filled,
+    ...normalizeVisualSettings(filled),
+    imageSizes: filled.imageSizes || {},
+    updatedAt: typeof filled.updatedAt === 'string' ? filled.updatedAt : now(),
+  }
+}
 
 const normalizeDraft = (value: Partial<DraftOrder> | null | undefined, settings: ClinicSettings): DraftOrder | null => {
   if (!value) return null
@@ -269,7 +285,7 @@ const normalizeStore = (value?: Partial<HeraStorage> | null): HeraStorage => {
     distributors: Array.isArray(value?.distributors) ? value.distributors : [],
     orders: orders.map(stripOrderImages),
     currentDraft: normalizeDraft(value?.currentDraft, settings),
-    selectedDesign: value?.selectedDesign,
+    selectedDesign: value?.selectedDesign || 'official-compact',
     updatedAt: value?.updatedAt || now(),
   }
 }

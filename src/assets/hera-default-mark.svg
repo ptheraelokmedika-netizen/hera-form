@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="118" fill="#fffdf7"/>
+  <path d="M255 88c-35 0-64 29-64 64v39h-39c-35 0-64 29-64 64s29 64 64 64h39v41c0 35 29 64 64 64s64-29 64-64v-41h41c35 0 64-29 64-64s-29-64-64-64h-41v-39c0-35-29-64-64-64Zm-18 64c0-10 8-18 18-18s18 8 18 18v85h87c10 0 18 8 18 18s-8 18-18 18h-87v87c0 10-8 18-18 18s-18-8-18-18v-87h-85c-10 0-18-8-18-18s8-18 18-18h85v-85Z" fill="none" stroke="#173d36" stroke-width="18" stroke-linejoin="round"/>
+  <path d="M150 256h212M256 150v214" stroke="#c5a35b" stroke-width="15" stroke-linecap="round"/>
+  <text x="256" y="462" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#173d36">HERA</text>
+</svg>
