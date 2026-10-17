@@ -52,6 +52,7 @@ import {
   saveCurrentDraft,
   saveSelectedDesign,
   saveSettings,
+  saveStore,
   uid,
   voidOrder,
 } from './storage/heraStorage'
@@ -61,11 +62,13 @@ const navItems: Array<{ key: Page; label: string; Icon: typeof FilePlus2 }> = [
   { key: 'create', label: 'Buat Surat', Icon: FilePlus2 },
   { key: 'history', label: 'History', Icon: FileClock },
   { key: 'distributors', label: 'Distributor', Icon: Store },
+  { key: 'products', label: 'Master Produk', Icon: PackagePlus },
   { key: 'settings', label: 'Settings', Icon: Settings },
   { key: 'designs', label: 'Pilihan Desain Surat', Icon: FileCheck2 },
 ]
 
 const pageMeta: Record<Page, { title: string; subtitle: string }> = {
+  products: { title: 'Master Produk', subtitle: 'Daftar produk untuk surat pemesanan.' },
   create: { title: 'Buat Surat', subtitle: 'Buat dan finalisasi surat pemesanan produk klinik.' },
   history: { title: 'History', subtitle: 'Kelola arsip finalized, draft, dan void surat pemesanan.' },
   distributors: { title: 'Distributor', subtitle: 'Master data distributor untuk mempercepat pembuatan surat.' },
@@ -496,6 +499,7 @@ function App() {
                 </button>
               </div>
               <div className="product-table">
+                <datalist id="master-products">{(loadStore().products || []).map((product) => <option key={product.id} value={product.productName}>{product.dosageForm}</option>)}</datalist>
                 <div className="product-head">
                   <span>No</span>
                   <span>Nama Produk</span>
@@ -510,10 +514,11 @@ function App() {
                     {(['productName', 'dosageForm', 'quantity', 'notes'] as const).map((key) => (
                       <input
                         key={key}
+                        list={key === 'productName' ? 'master-products' : undefined}
                         value={item[key]}
                         placeholder={{ productName: 'Nama produk', dosageForm: 'Krim/tablet...', quantity: '10 box', notes: 'Opsional' }[key]}
                         onChange={(e) =>
-                          patchDraft({ items: draft.items.map((row) => (row.id === item.id ? { ...row, [key]: e.target.value } : row)) })
+                          patchDraft({ items: draft.items.map((row) => { const product = key === 'productName' ? loadStore().products?.find((entry) => entry.productName === e.target.value) : undefined; return row.id === item.id ? { ...row, ...(product ? { dosageForm: product.dosageForm, notes: product.notes } : {}), [key]: e.target.value } : row }) })
                         }
                       />
                     ))}
@@ -597,6 +602,7 @@ function App() {
         {page === 'distributors' ? (
           <DistributorPage distributors={distributors} setDistributors={setDistributors} flash={flash} />
         ) : null}
+        {page === 'products' ? <ProductMasterPage /> : null}
 
         {page === 'settings' ? (
           <SettingsPage
@@ -1156,6 +1162,27 @@ function History({
   )
 }
 
+function ProductMasterPage() {
+  const [products, setProducts] = useState(() => loadStore().products || [])
+  const [query, setQuery] = useState('')
+  const [form, setForm] = useState({ id: '', productName: '', dosageForm: '', notes: '' })
+  const commit = (next: typeof products) => { saveStore({ ...loadStore(), products: next }); setProducts(next) }
+  return <section className="panel">
+    <Title icon={<PackagePlus size={18} />} title="Master Produk" text="" />
+    <form onSubmit={(event) => { event.preventDefault(); if (!form.productName.trim()) return; const item = { ...form, productName: form.productName.trim(), id: form.id || uid('product') }; commit(form.id ? products.map((row) => row.id === form.id ? item : row) : [...products, item]); setForm({ id: '', productName: '', dosageForm: '', notes: '' }) }}>
+      <div className="form-grid">
+        <label>Nama produk<input required value={form.productName} onChange={(event) => setForm({ ...form, productName: event.target.value })} /></label>
+        <label>Bentuk sediaan<input value={form.dosageForm} onChange={(event) => setForm({ ...form, dosageForm: event.target.value })} /></label>
+        <label>Keterangan<input value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
+      </div>
+      <button type="submit" className="primary"><Save size={16} />Simpan Produk</button>
+      {form.id ? <button type="button" className="secondary" onClick={() => setForm({ id: '', productName: '', dosageForm: '', notes: '' })}>Batal edit</button> : null}
+    </form>
+    <label>Cari produk<input value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+    {products.filter((item) => `${item.productName} ${item.dosageForm}`.toLowerCase().includes(query.toLowerCase())).map((item) => <div className="product-row" key={item.id}><strong>{item.productName}</strong><span>{item.dosageForm || '-'}</span><span>{item.notes || '-'}</span><button type="button" className="secondary" onClick={() => setForm(item)}><PenLine size={15} />Edit</button><button type="button" className="icon danger" aria-label="Hapus produk" onClick={() => { if (confirm('Hapus dari master produk? Surat yang sudah dibuat tetap tersimpan.')) commit(products.filter((row) => row.id !== item.id)) }}><Trash2 size={15} /></button></div>)}
+  </section>
+}
+
 function DistributorPage({
   distributors,
   setDistributors,
@@ -1343,6 +1370,7 @@ function SettingsPage({
         {{ logoUrl: 'Download Logo', signatureUrl: 'Download TTD', stampUrl: 'Download Stempel' }[key]}
       </button>
       {!form[key] ? <small>Belum ada file</small> : null}
+      <button type="button" className="secondary" disabled={!form[key]} onClick={() => patch({ [key]: '', imageSizes: { ...(form.imageSizes || {}), [key]: undefined } })}><Trash2 size={15} />{key === 'stampUrl' ? 'Tanpa stempel / hapus gambar' : 'Hapus gambar'}</button>
     </div>
   )
   const resetToHeraDefaults = () => {

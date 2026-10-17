@@ -101,6 +101,8 @@ export type SignatureAssetLayout = {
 }
 
 export type HeraStorage = {
+  photoMasterImported?: boolean
+  products?: Array<{ id: string; productName: string; dosageForm: string; notes: string }>
   version: 1
   settings: ClinicSettings
   distributors: Distributor[]
@@ -110,4 +112,4 @@ export type HeraStorage = {
   updatedAt: string
 }
 
-export type Page = 'create' | 'history' | 'distributors' | 'settings' | 'designs'
+export type Page = 'create' | 'history' | 'distributors' | 'products' | 'settings' | 'designs'

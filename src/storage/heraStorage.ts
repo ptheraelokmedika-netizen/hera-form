@@ -162,7 +162,7 @@ const withMissingDefaults = (value?: Partial<ClinicSettings> | null): Partial<Cl
   const defaults = defaultSettings()
   const next = { ...(value || {}) }
   ;(['companyName', 'logoUrl', 'nib', 'licenseNumber', 'address', 'contactNumber', 'email', 'pharmacistName', 'pharmacistSipa', 'signatureUrl', 'stampUrl'] as const).forEach((key) => {
-    if (typeof next[key] !== 'string' || !next[key]?.trim()) next[key] = defaults[key]
+    if (typeof next[key] !== 'string' || (!['logoUrl', 'signatureUrl', 'stampUrl'].includes(key) && !next[key]?.trim())) next[key] = defaults[key]
   })
   return next
 }
@@ -281,6 +281,8 @@ const normalizeStore = (value?: Partial<HeraStorage> | null): HeraStorage => {
     : []
   return {
     version: 1,
+    photoMasterImported: value?.photoMasterImported || false,
+    products: Array.isArray(value?.products) ? value.products : [],
     settings,
     distributors: Array.isArray(value?.distributors) ? value.distributors : [],
     orders: orders.map(stripOrderImages),
@@ -312,6 +314,46 @@ const migrateOldKeys = (): HeraStorage | null => {
   return normalizeStore({ settings: settings || undefined, distributors: distributors || [], orders: orders || [], currentDraft, updatedAt: now() } as Partial<HeraStorage>)
 }
 
+const importPhotoMaster = (store: HeraStorage): HeraStorage => {
+  if (store.photoMasterImported) return store
+  const timestamp = now()
+  const products = [...(store.products || [])]
+  const distributors = [...store.distributors]
+  const key = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const photoProducts = [
+    ['Zelface', 'Tube'],
+    ['Seloxy Premium', 'Box'],
+    ['Ulvice', 'Injeksi'],
+    ['Innoceutics B5 Serum', 'Serum'],
+    ['Allergan Botox 100 Units', 'Vial'],
+    ['Cinogenta', 'Tube'],
+    ['Prosentials', 'Box'],
+    ['NaCl 0.9% 100 ml', ''],
+    ['NaCl 0.9% 25 ml', ''],
+    ['Astria Force', 'Suplemen'],
+    ['Astria Ultra', 'Suplemen'],
+  ]
+  photoProducts.forEach(([productName, dosageForm]) => {
+    if (!products.some((item) => key(item.productName) === key(productName))) {
+      products.push({ id: uid('product'), productName, dosageForm, notes: '' })
+    }
+  })
+  const photoDistributors = [
+    { name: 'PT Anugrah Argon Medica', address: 'Jln. S. M. Amin No 169 A-G RT 01, RW 17 Kel. Simpangbaru Kec. Binawidya, Kota Pekanbaru', contactNumber: '0761-6700121' },
+    { name: 'PT Mensa Bina Sukses', address: 'Jln SM Amin, Komplek Pergudangan Angkasa Blok C No 1', contactNumber: '' },
+    { name: 'PT Anugerah Pharmindo Lestari', address: '', contactNumber: '' },
+    { name: 'PT PPI', address: '', contactNumber: '' },
+  ]
+  photoDistributors.forEach((item) => {
+    if (!distributors.some((existing) => key(existing.name) === key(item.name))) {
+      distributors.push({ ...item, id: uid('dist'), email: '', notes: '', isDeleted: false, createdAt: timestamp, updatedAt: timestamp })
+    }
+  })
+  const next = { ...store, products, distributors, photoMasterImported: true, updatedAt: timestamp }
+  safeSaveStore(next)
+  return next
+}
+
 export const loadStore = (): HeraStorage => {
   const raw = localStorage.getItem(STORAGE_KEY)
   if (raw) {
@@ -327,18 +369,18 @@ export const loadStore = (): HeraStorage => {
       }
       const normalized = normalizeStore(parsed)
       if (hadBloatedImages) safeSaveStore(normalized)
-      return normalized
+      return importPhotoMaster(normalized)
     }
     localStorage.setItem(CORRUPT_BACKUP_KEY, raw)
   }
   const migrated = migrateOldKeys()
   if (migrated) {
     saveStore(migrated)
-    return migrated
+    return importPhotoMaster(migrated)
   }
   const fresh = normalizeStore({ settings: defaultSettings(), distributors: [], orders: [], currentDraft: null, updatedAt: now() })
   saveStore(fresh)
-  return fresh
+  return importPhotoMaster(fresh)
 }
 
 export const saveStore = (store: HeraStorage) => {
@@ -531,6 +573,7 @@ export const mergeImportedStore = (incoming: HeraStorage, mode: 'merge' | 'repla
   return saveStore({
     ...current,
     settings: normalized.settings,
+    products: Array.from(new Map([...(current.products || []), ...(normalized.products || [])].map((item) => [item.id, item])).values()),
     distributors,
     orders,
     currentDraft: normalized.currentDraft || current.currentDraft,
